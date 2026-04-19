@@ -1,0 +1,12 @@
+{
+  "buildCommand": "npm run build",
+  "framework": "react",
+  "outputDirectory": "dist",
+  "env": {
+    "VITE_ANTHROPIC_API_KEY": {
+      "description": "Your Anthropic API key for Claude",
+      "required": true
+    }
+  },
+  "regions": ["iad1"]
+}
