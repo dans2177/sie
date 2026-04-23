@@ -1,46 +1,91 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import type { ResourcesPanelProps } from '../../types/index';
 import { toughSpots } from '../../lib/content/sieContent';
 import { ToughSpotCard } from './ToughSpotCard';
 
+interface QuizRecord {
+  id: string;
+  date: number;
+  score: number;
+  total: number;
+  topicsFailed: string[];
+}
+
+interface StoredData {
+  quizHistory?: QuizRecord[];
+  progress?: Record<string, { attempts: number; correct: number; lastReview: number }>;
+}
+
+function loadStoredData(): StoredData {
+  try {
+    const raw = localStorage.getItem('sie-tutor-data');
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+
 export function ResourcesPanel({ userStats, toughSpots: providedToughSpots }: ResourcesPanelProps) {
   const [activeTab, setActiveTab] = useState<'tough' | 'tips' | 'progress'>('tough');
+  const [quizHistory, setQuizHistory] = useState<QuizRecord[]>([]);
+  const [topicStats, setTopicStats] = useState<Record<string, { attempts: number; correct: number }>>({});
   const spotsToShow = providedToughSpots.length > 0 ? providedToughSpots : toughSpots;
+
+  useEffect(() => {
+    const data = loadStoredData();
+    setQuizHistory(data.quizHistory ?? []);
+    setTopicStats(data.progress ?? {});
+  }, []);
+
+  // Refresh when switching to progress tab
+  const handleTabClick = (tab: 'tough' | 'tips' | 'progress') => {
+    if (tab === 'progress') {
+      const data = loadStoredData();
+      setQuizHistory(data.quizHistory ?? []);
+      setTopicStats(data.progress ?? {});
+    }
+    setActiveTab(tab);
+  };
+
+  const totalQuizzes = quizHistory.length;
+  const overallScore = totalQuizzes > 0
+    ? Math.round(quizHistory.reduce((sum, q) => sum + (q.score / q.total) * 100, 0) / totalQuizzes)
+    : null;
+
+  const failCounts: Record<string, number> = {};
+  quizHistory.forEach((q) => {
+    q.topicsFailed.forEach((t) => {
+      failCounts[t] = (failCounts[t] ?? 0) + 1;
+    });
+  });
+  const weakTopics = Object.entries(failCounts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 4)
+    .map(([t]) => t);
+
+  const masteredTopics = Object.entries(topicStats)
+    .filter(([, s]) => s.attempts >= 5 && s.correct / s.attempts >= 0.8)
+    .map(([t]) => t);
+
+  const recentQuizzes = quizHistory.slice(-5).reverse();
 
   return (
     <div className="flex flex-col h-full">
       {/* Tabs */}
       <div className="flex border-b border-slate-200 dark:border-slate-600 px-4 pt-3">
-        <button
-          onClick={() => setActiveTab('tough')}
-          className={`px-4 py-2 font-medium text-sm border-b-2 transition-colors ${
-            activeTab === 'tough'
-              ? 'border-blue-600 text-blue-600 dark:text-blue-400'
-              : 'border-transparent text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-300'
-          }`}
-        >
-          🎯 Tough Spots
-        </button>
-        <button
-          onClick={() => setActiveTab('tips')}
-          className={`px-4 py-2 font-medium text-sm border-b-2 transition-colors ${
-            activeTab === 'tips'
-              ? 'border-blue-600 text-blue-600 dark:text-blue-400'
-              : 'border-transparent text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-300'
-          }`}
-        >
-          💡 Tips
-        </button>
-        <button
-          onClick={() => setActiveTab('progress')}
-          className={`px-4 py-2 font-medium text-sm border-b-2 transition-colors ${
-            activeTab === 'progress'
-              ? 'border-blue-600 text-blue-600 dark:text-blue-400'
-              : 'border-transparent text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-300'
-          }`}
-        >
-          📊 Progress
-        </button>
+        {(['tough', 'tips', 'progress'] as const).map((tab) => (
+          <button
+            key={tab}
+            onClick={() => handleTabClick(tab)}
+            className={`px-4 py-2 font-medium text-sm border-b-2 transition-colors ${
+              activeTab === tab
+                ? 'border-blue-600 text-blue-600 dark:text-blue-400'
+                : 'border-transparent text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-300'
+            }`}
+          >
+            {tab === 'tough' ? '🎯 Tough Spots' : tab === 'tips' ? '💡 Tips' : '📊 Progress'}
+          </button>
+        ))}
       </div>
 
       {/* Content */}
@@ -92,65 +137,88 @@ export function ResourcesPanel({ userStats, toughSpots: providedToughSpots }: Re
 
         {activeTab === 'progress' && (
           <div className="space-y-3">
+            {/* Session stats */}
             <div className="bg-slate-100 dark:bg-slate-700 p-4 rounded-lg">
               <h3 className="font-semibold text-slate-900 dark:text-white mb-3">📈 Session Stats</h3>
               <div className="space-y-2 text-sm">
                 <div className="flex justify-between">
                   <span className="text-slate-600 dark:text-slate-400">Questions Asked:</span>
-                  <span className="font-bold text-slate-900 dark:text-white">
-                    {userStats.questionsAsked}
-                  </span>
+                  <span className="font-bold text-slate-900 dark:text-white">{userStats.questionsAsked}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-slate-600 dark:text-slate-400">Topics Studied:</span>
-                  <span className="font-bold text-slate-900 dark:text-white">
-                    {Object.keys(userStats.topicsStudied).length}
-                  </span>
+                  <span className="text-slate-600 dark:text-slate-400">Quizzes Taken:</span>
+                  <span className="font-bold text-slate-900 dark:text-white">{totalQuizzes}</span>
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-600 dark:text-slate-400">Difficult Topics:</span>
-                  <span className="font-bold text-slate-900 dark:text-white">
-                    {userStats.difficultTopics.length}
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-600 dark:text-slate-400">Mastered:</span>
-                  <span className="font-bold text-slate-900 dark:text-white">
-                    {userStats.mastered.length}
-                  </span>
-                </div>
+                {overallScore !== null && (
+                  <div className="flex justify-between">
+                    <span className="text-slate-600 dark:text-slate-400">Avg Quiz Score:</span>
+                    <span className={`font-bold ${overallScore >= 70 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+                      {overallScore}%
+                    </span>
+                  </div>
+                )}
               </div>
             </div>
 
-            {userStats.difficultTopics.length > 0 && (
+            {/* Recent quizzes */}
+            {recentQuizzes.length > 0 && (
+              <div className="bg-slate-50 dark:bg-slate-700 p-4 rounded-lg">
+                <h4 className="font-semibold text-slate-900 dark:text-white mb-3">🕒 Recent Quizzes</h4>
+                <div className="space-y-2">
+                  {recentQuizzes.map((q) => {
+                    const pct = Math.round((q.score / q.total) * 100);
+                    return (
+                      <div key={q.id} className="flex items-center justify-between text-sm">
+                        <span className="text-slate-600 dark:text-slate-400">
+                          {new Date(q.date).toLocaleDateString()}
+                        </span>
+                        <span className={`font-bold ${pct >= 70 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+                          {q.score}/{q.total} ({pct}%)
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Weak topics */}
+            {weakTopics.length > 0 && (
               <div className="bg-red-50 dark:bg-red-900 p-4 rounded-lg">
-                <h4 className="font-semibold text-red-900 dark:text-red-100 mb-2">
-                  Focus Areas (Needs Review)
-                </h4>
+                <h4 className="font-semibold text-red-900 dark:text-red-100 mb-2">📍 Focus Areas</h4>
                 <div className="space-y-1 text-sm text-red-800 dark:text-red-200">
-                  {userStats.difficultTopics.map((topic) => (
-                    <div key={topic} className="flex items-center">
-                      <span className="text-lg mr-2">📍</span>
-                      {topic}
+                  {weakTopics.map((topic) => (
+                    <div key={topic} className="flex items-center gap-2">
+                      <span>⚠️</span>
+                      <span className="capitalize">{topic.replace('_', ' ')}</span>
+                      <span className="text-xs text-red-600 dark:text-red-400">
+                        ({failCounts[topic]} missed)
+                      </span>
                     </div>
                   ))}
                 </div>
               </div>
             )}
 
-            {userStats.mastered.length > 0 && (
+            {/* Mastered topics */}
+            {masteredTopics.length > 0 && (
               <div className="bg-green-50 dark:bg-green-900 p-4 rounded-lg">
-                <h4 className="font-semibold text-green-900 dark:text-green-100 mb-2">
-                  ✨ Mastered Topics
-                </h4>
+                <h4 className="font-semibold text-green-900 dark:text-green-100 mb-2">✨ Mastered</h4>
                 <div className="space-y-1 text-sm text-green-800 dark:text-green-200">
-                  {userStats.mastered.map((topic) => (
-                    <div key={topic} className="flex items-center">
-                      <span className="text-lg mr-2">✅</span>
-                      {topic}
+                  {masteredTopics.map((topic) => (
+                    <div key={topic} className="flex items-center gap-2">
+                      <span>✅</span>
+                      <span className="capitalize">{topic.replace('_', ' ')}</span>
                     </div>
                   ))}
                 </div>
+              </div>
+            )}
+
+            {totalQuizzes === 0 && (
+              <div className="text-center py-8 text-slate-500 dark:text-slate-400 text-sm">
+                <p className="text-3xl mb-2">🎯</p>
+                <p>Take a quiz to start tracking your progress!</p>
               </div>
             )}
           </div>

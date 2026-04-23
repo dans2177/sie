@@ -1,9 +1,9 @@
 import { useMemo } from 'react';
 import { equations } from '../../lib/content/sieContent';
-import type { CheatsheetProps } from '../../types/index';
+import type { CheatsheetProps, ExamCategory } from '../../types/index';
 import { EquationCard } from './EquationCard';
 
-export function CheatsheetPanel({ searchQuery, selectedCategory }: CheatsheetProps) {
+export function CheatsheetPanel({ searchQuery, selectedCategory, onCategoryChange }: CheatsheetProps) {
   const filteredEquations = useMemo(() => {
     return equations.filter((eq) => {
       const matchesSearch =
@@ -39,9 +39,7 @@ export function CheatsheetPanel({ searchQuery, selectedCategory }: CheatsheetPro
                   ? 'bg-blue-500 text-white'
                   : 'bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-200'
               }`}
-              onClick={() => {
-                // This will need to be connected to parent state
-              }}
+              onClick={() => onCategoryChange(cat.id as ExamCategory | 'all')}
             >
               {cat.icon} {cat.label}
             </button>

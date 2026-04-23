@@ -4,13 +4,13 @@ import { ChatPanel } from '../Chat/ChatPanel';
 import { ResourcesPanel } from '../Resources/ResourcesPanel';
 import { QuizMode } from '../Quiz/QuizMode';
 import { sendMessageToClaudeStream } from '../../lib/api/claudeClient';
-import type { ChatMessage } from '../../types/index';
+import type { ChatMessage, ExamCategory } from '../../types/index';
 
 export function MainLayout() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedCategory] = useState<any>('all');
+  const [selectedCategory, setSelectedCategory] = useState<ExamCategory | 'all'>('all');
   const [mode, setMode] = useState<'study' | 'quiz'>('study');
   const [darkMode, setDarkMode] = useState(() =>
     localStorage.getItem('darkMode') === 'true',
@@ -26,52 +26,48 @@ export function MainLayout() {
   }, [darkMode]);
 
   const handleSendMessage = async (message: string) => {
-    const newMessage: ChatMessage = {
-      id: Math.random().toString(36),
+    const userMsgId = Math.random().toString(36);
+    const assistantMsgId = Math.random().toString(36);
+    const newUserMessage: ChatMessage = {
+      id: userMsgId,
       role: 'user',
       content: message,
       timestamp: Date.now(),
     };
-    setMessages((prev) => [...prev, newMessage]);
+    const placeholderAssistant: ChatMessage = {
+      id: assistantMsgId,
+      role: 'assistant',
+      content: '',
+      timestamp: Date.now(),
+    };
+
+    setMessages((prev) => [...prev, newUserMessage, placeholderAssistant]);
     setIsLoading(true);
 
     let fullResponse = '';
 
     try {
-      await sendMessageToClaudeStream(message, [...messages, newMessage], (chunk) => {
-        fullResponse += chunk;
-        setMessages((prev) => {
-          const updated = [...prev];
-          const lastMsg = updated[updated.length - 1];
-          if (lastMsg.role === 'assistant') {
-            lastMsg.content = fullResponse;
-          }
-          return updated;
-        });
-      });
-
-      if (!messages.some((m) => m.role === 'assistant' && m.content === fullResponse)) {
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: Math.random().toString(36),
-            role: 'assistant',
-            content: fullResponse,
-            timestamp: Date.now(),
-          },
-        ]);
-      }
+      await sendMessageToClaudeStream(
+        message,
+        [...messages, newUserMessage],
+        (chunk) => {
+          fullResponse += chunk;
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === assistantMsgId ? { ...m, content: fullResponse } : m,
+            ),
+          );
+        },
+      );
     } catch (error) {
       console.error('Chat error:', error);
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: Math.random().toString(36),
-          role: 'assistant',
-          content: '❌ Error: Could not connect to AI. Check your API key in .env',
-          timestamp: Date.now(),
-        },
-      ]);
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === assistantMsgId
+            ? { ...m, content: '❌ Error: Could not connect to AI. Check your API key in .env' }
+            : m,
+        ),
+      );
     } finally {
       setIsLoading(false);
     }
@@ -129,7 +125,11 @@ export function MainLayout() {
                 className="mt-3 w-full px-3 py-2 border border-emerald-300 dark:border-emerald-600 rounded-lg text-sm dark:bg-slate-700 dark:text-white focus:ring-2 focus:ring-emerald-500 outline-none"
               />
             </div>
-            <CheatsheetPanel searchQuery={searchQuery} selectedCategory={selectedCategory} />
+            <CheatsheetPanel
+              searchQuery={searchQuery}
+              selectedCategory={selectedCategory}
+              onCategoryChange={setSelectedCategory}
+            />
           </div>
 
           {/* CENTER COLUMN: Chat Interface */}

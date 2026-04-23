@@ -99,6 +99,7 @@ export interface LayoutProps {
 export interface CheatsheetProps {
   searchQuery: string;
   selectedCategory: ExamCategory | 'all';
+  onCategoryChange: (category: ExamCategory | 'all') => void;
 }
 
 export interface ChatPanelProps {

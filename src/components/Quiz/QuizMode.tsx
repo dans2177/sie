@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { generateQuizQuestions, scoringQuiz } from '../../lib/api/quizGenerator';
-import { addQuizResult } from '../../lib/storage/blobStorage';
+import { addQuizResult, updateProgress } from '../../lib/storage/blobStorage';
 import type { QuizQuestion } from '../../lib/api/quizGenerator';
 
 interface QuizModeProps {
@@ -67,9 +67,13 @@ export function QuizMode({ onBackToStudy }: QuizModeProps) {
     const scoring = await scoringQuiz(questions, answers);
     setResults(scoring);
 
-    // Save results to Vercel Blob
     const failedTopics = scoring.mistakes.map((m) => m.question.topic);
     await addQuizResult(scoring.score, scoring.total, failedTopics);
+
+    // Track per-question topic progress
+    for (let i = 0; i < questions.length; i++) {
+      await updateProgress(questions[i].topic, answers[i] === questions[i].correctAnswer);
+    }
 
     setStage('results');
   };
@@ -266,8 +270,18 @@ export function QuizMode({ onBackToStudy }: QuizModeProps) {
                 <div className="space-y-4 max-h-64 overflow-y-auto">
                   {results.mistakes.map((m: any, i: number) => (
                     <div key={i} className="bg-red-50 dark:bg-red-900 p-4 rounded-lg border border-red-200 dark:border-red-800">
-                      <p className="font-semibold text-slate-900 dark:text-white mb-2">{m.question.question}</p>
-                      <p className="text-sm text-slate-700 dark:text-slate-300 mb-3">📝 {m.question.explanation}</p>
+                      <p className="font-semibold text-slate-900 dark:text-white mb-3">{m.question.question}</p>
+                      <div className="space-y-1 mb-3">
+                        <p className="text-sm text-red-700 dark:text-red-300">
+                          ❌ Your answer: <span className="font-medium">{m.question.options[m.userAnswer] ?? 'Not answered'}</span>
+                        </p>
+                        <p className="text-sm text-green-700 dark:text-green-300">
+                          ✅ Correct: <span className="font-medium">{m.question.options[m.question.correctAnswer]}</span>
+                        </p>
+                      </div>
+                      <p className="text-sm text-slate-600 dark:text-slate-400 border-t border-red-200 dark:border-red-700 pt-2">
+                        📝 {m.question.explanation}
+                      </p>
                     </div>
                   ))}
                 </div>
