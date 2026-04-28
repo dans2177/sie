@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { C } from './data/colors';
 import { CURRICULUM, TOTAL } from './data/curriculum';
 import { MATH } from './data/math';
+import { CHEATSHEET } from './data/cheatsheet';
 import { callClaude } from './lib/api';
 import { loadDone, saveDone } from './lib/storage';
 import { pickVoice, cleanSpeech } from './lib/tts';
@@ -68,6 +69,7 @@ function Header({ pct, view, onViewChange }: { pct: number; view: View; onViewCh
         />
         <Btn label="TOPICS" active={view === 'topics' || view === 'chat'} onClick={() => onViewChange('topics')} />
         <Btn label="MATH" active={view === 'math'} onClick={() => onViewChange('math')} />
+        <Btn label="CHEATSHEET" active={view === 'cheatsheet'} onClick={() => onViewChange('cheatsheet')} />
       </div>
     </div>
   );
@@ -493,7 +495,7 @@ function ChatView({
   onSend: () => void;
   onBack: () => void;
   speakIdx: number | string | null;
-  onSpeak: (idx: number | string) => void;
+  onSpeak: (text: string, idx: number | string) => void;
   spRate: number;
   onSpRateChange: (r: number) => void;
   voiceName: string | null;
@@ -634,7 +636,7 @@ function ChatView({
               {msg.role === 'assistant' && (
                 <button
                   title={speakIdx === i ? 'Stop' : 'Listen'}
-                  onClick={() => onSpeak(i)}
+                  onClick={() => onSpeak(msg.content, i)}
                   style={{
                     background: 'none',
                     border: 'none',
@@ -761,7 +763,7 @@ function ChatView({
   );
 }
 
-function MathSheet({ speakIdx, onSpeak }: { speakIdx: number | string | null; onSpeak: (idx: number | string) => void }) {
+function MathSheet({ speakIdx, onSpeak }: { speakIdx: number | string | null; onSpeak: (text: string, idx: number | string) => void }) {
   return (
     <div style={{ flex: 1, overflowY: 'auto', padding: '20px', background: C.bg }}>
       <div style={{ maxWidth: '820px', margin: '0 auto' }}>
@@ -828,7 +830,7 @@ function MathSheet({ speakIdx, onSpeak }: { speakIdx: number | string | null; on
                 </div>
                 <button
                   title="Listen"
-                  onClick={() => onSpeak(`m${i}`)}
+                  onClick={() => onSpeak(`${f.title}: ${f.formula}`, `m${i}`)}
                   style={{
                     background: 'none',
                     border: 'none',
@@ -928,6 +930,116 @@ function MathSheet({ speakIdx, onSpeak }: { speakIdx: number | string | null; on
   );
 }
 
+function CheatSheet() {
+  return (
+    <div
+      style={{
+        flex: 1,
+        overflowY: 'auto',
+        background: C.bg,
+        padding: '20px',
+      }}
+    >
+      <div style={{ maxWidth: '1400px', margin: '0 auto' }}>
+        <div style={{ marginBottom: '24px' }}>
+          <div
+            style={{
+              fontSize: '16px',
+              fontWeight: 'bold',
+              color: C.amber,
+              letterSpacing: '0.1em',
+              marginBottom: '8px',
+            }}
+          >
+            SIE QUICK REFERENCE CHEATSHEET
+          </div>
+          <div style={{ fontSize: '12px', color: C.dim }}>
+            Essential formulas, rules, and definitions for SIE exam mastery
+          </div>
+        </div>
+
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
+            gap: '16px',
+          }}
+        >
+          {CHEATSHEET.map(item => (
+            <div
+              key={item.id}
+              style={{
+                background: C.card,
+                border: `1px solid ${C.border}`,
+                borderRadius: '8px',
+                padding: '16px',
+                borderLeft: `3px solid ${item.color}`,
+              }}
+            >
+              <div
+                style={{
+                  fontSize: '10px',
+                  color: item.color,
+                  fontWeight: 'bold',
+                  letterSpacing: '0.1em',
+                  textTransform: 'uppercase',
+                  marginBottom: '6px',
+                }}
+              >
+                {item.category}
+              </div>
+              <div
+                style={{
+                  fontSize: '13px',
+                  fontWeight: 'bold',
+                  color: C.text,
+                  marginBottom: '8px',
+                }}
+              >
+                {item.title}
+              </div>
+              <div
+                style={{
+                  fontSize: '11px',
+                  color: item.color,
+                  fontFamily: 'monospace',
+                  background: `${item.color}0d`,
+                  padding: '8px 10px',
+                  borderRadius: '4px',
+                  marginBottom: '10px',
+                  lineHeight: 1.6,
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-word',
+                }}
+              >
+                {item.content}
+              </div>
+              {item.rules && item.rules.length > 0 && (
+                <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: '10px' }}>
+                  {item.rules.map((rule, idx) => (
+                    <div
+                      key={idx}
+                      style={{
+                        fontSize: '10px',
+                        color: C.muted,
+                        marginBottom: '4px',
+                        paddingLeft: '10px',
+                        borderLeft: `2px solid ${item.color}66`,
+                      }}
+                    >
+                      • {rule}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const [done, setDone] = useState<Set<string>>(() => loadDone());
   const [sel, setSel] = useState<SelectedTopic | null>(null);
@@ -936,7 +1048,7 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [pdf, setPdf] = useState<PdfState>({ b64: null, name: null });
   const [ready, setReady] = useState(false);
-  const [exp, setExp] = useState({ d1: true, d2: false, d3: false, d4: false });
+  const [exp, setExp] = useState<Record<string, boolean>>({ d1: true, d2: false, d3: false, d4: false });
   const [view, setView] = useState<View>('topics');
   const [speakIdx, setSpeakIdx] = useState<number | string | null>(null);
   const [spRate, setSpRate] = useState(1.0);
@@ -1071,6 +1183,7 @@ export default function App() {
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
         {view === 'dashboard' && <Dashboard done={done} pdf={pdf} onPdfChange={setPdf} />}
         {view === 'math' && <MathSheet speakIdx={speakIdx} onSpeak={speak} />}
+        {view === 'cheatsheet' && <CheatSheet />}
         {isTopicView && (
           <>
             <Sidebar

@@ -40,4 +40,4 @@ export interface SelectedTopic {
   domain: Domain;
 }
 
-export type View = 'dashboard' | 'topics' | 'chat' | 'math';
+export type View = 'dashboard' | 'topics' | 'chat' | 'math' | 'cheatsheet';
