@@ -538,6 +538,12 @@ export default function App() {
               onToggleCollapsed={() => setSidebarCollapsed((v) => !v)}
               view={view}
               onViewChange={(next) => {
+                if (next === 'math' || next === 'cheatsheet') {
+                  setModal(next);
+                  log('modal_opened', { modal: next, source: 'sidebar_menu' });
+                  return;
+                }
+
                 if (next === 'topics' && lastTopicId) {
                   const found = findTopicById(lastTopicId);
                   if (found) {
@@ -546,6 +552,7 @@ export default function App() {
                     return;
                   }
                 }
+                setModal(null);
                 setView(next);
                 log('view_changed', { view: next });
               }}

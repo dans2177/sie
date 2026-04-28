@@ -32,6 +32,7 @@ export default function DailyTestView({ profileId, memory, onSaved, onLog, onOut
   const [generationProgress, setGenerationProgress] = useState<GenerationProgress | null>(null);
 
   const today = useMemo(() => new Date().toISOString().slice(0, 10), []);
+  const draftKey = useMemo(() => `sie-v5-daily-draft:${profileId}:${today}`, [profileId, today]);
   const topicNameById = useMemo(() => {
     const map: Record<string, string> = {};
     CURRICULUM.forEach((d) => d.topics.forEach((t) => {
@@ -68,12 +69,36 @@ export default function DailyTestView({ profileId, memory, onSaved, onLog, onOut
     return 3;
   }, [studyMode]);
 
+  const clearDraft = () => {
+    try {
+      localStorage.removeItem(draftKey);
+    } catch {
+      // fall through
+    }
+  };
+
+  const loadDraft = (): { questions: DailyQuestion[]; answers: number[] } | null => {
+    try {
+      const raw = localStorage.getItem(draftKey);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw) as { questions?: DailyQuestion[]; answers?: number[] };
+      if (!Array.isArray(parsed.questions) || !Array.isArray(parsed.answers)) return null;
+      return {
+        questions: parsed.questions,
+        answers: parsed.answers,
+      };
+    } catch {
+      return null;
+    }
+  };
+
   useEffect(() => {
     let cancelled = false;
 
     const load = async () => {
       setLoading(true);
       const data = await loadDailyTest(profileId, today);
+      const draft = loadDraft();
       if (cancelled) return;
 
       onLog('daily_test_loaded', {
@@ -83,7 +108,21 @@ export default function DailyTestView({ profileId, memory, onSaved, onLog, onOut
 
       setHistory(data.history || []);
 
-      const q = await getOrBuildTodayQuestions(profileId, today, data.today, {
+      const q = await getOrBuildTodayQuestions(
+        profileId,
+        today,
+        data.today || (draft ? {
+          date: today,
+          score: 0,
+          total: draft.questions.length,
+          completedAt: new Date().toISOString(),
+          payload: {
+            questions: draft.questions,
+            selectedAnswers: draft.answers,
+          },
+          weakTopicIds: [],
+        } : null),
+        {
         total: 20,
         weakTopicIds: memory.weakTopicIds,
         adaptiveBrief: memory.adaptiveBrief,
@@ -104,6 +143,17 @@ export default function DailyTestView({ profileId, memory, onSaved, onLog, onOut
         setSubmitted(true);
         setScore(Number(data.today.score || 0));
         setWeakTopicIds(Array.isArray(data.today.weakTopicIds) ? data.today.weakTopicIds : []);
+        clearDraft();
+      } else if (draft && draft.questions.length > 0) {
+        const restored = new Array(q.length).fill(-1);
+        for (let i = 0; i < Math.min(restored.length, draft.answers.length); i += 1) {
+          const value = Number(draft.answers[i]);
+          restored[i] = Number.isInteger(value) ? value : -1;
+        }
+        setAnswers(restored);
+        setSubmitted(false);
+        setScore(0);
+        setWeakTopicIds([]);
       } else {
         setAnswers(new Array(q.length).fill(-1));
         setSubmitted(false);
@@ -132,6 +182,22 @@ export default function DailyTestView({ profileId, memory, onSaved, onLog, onOut
 
     return () => window.clearInterval(id);
   }, [loading, submitted, testPace, timeLeftSec]);
+
+  useEffect(() => {
+    if (loading || submitted || questions.length === 0) return;
+    try {
+      localStorage.setItem(
+        draftKey,
+        JSON.stringify({
+          questions,
+          answers,
+          updatedAt: new Date().toISOString(),
+        })
+      );
+    } catch {
+      // fall through
+    }
+  }, [loading, submitted, questions, answers, draftKey]);
 
   const submit = async (forced = false) => {
     if (submitted) return;
@@ -164,6 +230,8 @@ export default function DailyTestView({ profileId, memory, onSaved, onLog, onOut
       },
       weakTopicIds: result.weakTopicIds,
     });
+
+    clearDraft();
 
     questions.forEach((q, idx) => {
       onOutcome(q.topicId, answers[idx] === q.answerIndex);
