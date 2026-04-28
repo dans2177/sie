@@ -1,13 +1,5 @@
 import { C } from './colors';
-
-export interface CheatsheetItem {
-  id: string;
-  category: string;
-  title: string;
-  color: string;
-  content: string;
-  rules?: string[];
-}
+import type { CheatsheetItem } from '../types/index';
 
 export const CHEATSHEET: CheatsheetItem[] = [
   {

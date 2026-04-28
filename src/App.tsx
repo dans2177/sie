@@ -1,1059 +1,82 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
-import { C } from './data/colors';
+import { lazy, Suspense, useState, useEffect, useRef, useCallback } from 'react';
+import { C, applyTheme } from './data/colors';
 import { CURRICULUM, TOTAL } from './data/curriculum';
-import { MATH } from './data/math';
-import { CHEATSHEET } from './data/cheatsheet';
 import { callClaude } from './lib/api';
-import { loadDone, saveDone } from './lib/storage';
+import {
+  clearActiveProfile,
+  loadActiveProfile,
+  loadDone,
+  loadTourHidden,
+  loadTopicChat,
+  saveActiveProfile,
+  saveDone,
+  saveTourHidden,
+  saveTopicChat,
+} from './lib/storage';
 import { pickVoice, cleanSpeech } from './lib/tts';
-import type { ChatMessage, PdfState, SelectedTopic, View } from './types';
+import {
+  loadMemorySummary,
+  loadLastTopic,
+  loadProgress,
+  loadTopicChatRemote,
+  logEvent,
+  saveChatMemory,
+  saveLastTopic,
+  saveTopicChatRemote,
+  syncProgress,
+} from './lib/server';
+import { countCorrectAnswers, parseAssistantOutcome, upsertAssistantMessage } from './lib/chatHelpers';
+import type { ChatMessage, Domain, MemorySummary, SelectedTopic, Topic, View } from './types/index';
+import AccessGate from './components/AccessGate';
+import AppHeader from './components/AppHeader';
+import OverlayModal from './components/OverlayModal';
+import Sidebar from './components/Sidebar';
+import WalkthroughContent from './components/WalkthroughContent';
+import { clearObjectives, reviewObjective } from './lib/spacedRepetition';
 
-function Header({ pct, view, onViewChange }: { pct: number; view: View; onViewChange: (v: View) => void }) {
-  const Btn = ({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) => (
-    <button
-      onClick={onClick}
-      style={{
-        padding: '5px 13px',
-        borderRadius: '4px',
-        border: '1px solid',
-        borderColor: active ? C.amber : C.border,
-        background: active ? C.amberBg : 'transparent',
-        color: active ? C.amber : C.dim,
-        cursor: 'pointer',
-        fontSize: '11px',
-        letterSpacing: '0.06em',
-        fontFamily: 'inherit',
-      }}
-    >
-      {label}
-    </button>
-  );
+const ChatView = lazy(() => import('./components/ChatView'));
+const MathSheet = lazy(() => import('./components/MathSheet'));
+const CheatSheet = lazy(() => import('./components/CheatSheet'));
+const DailyTestView = lazy(() => import('./components/DailyTestView'));
+const OverviewView = lazy(() => import('./components/OverviewView'));
+const MockExamView = lazy(() => import('./components/MockExamView'));
 
-  return (
-    <div
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        padding: '10px 16px',
-        borderBottom: `1px solid ${C.border}`,
-        background: C.panel,
-        gap: '12px',
-        flexShrink: 0,
-      }}
-    >
-      <div>
-        <div style={{ fontSize: '14px', fontWeight: 'bold', color: C.amber, letterSpacing: '0.08em' }}>
-          SIE STUDY SYSTEM
-        </div>
-        <div style={{ fontSize: '9px', color: C.dim, letterSpacing: '0.15em', textTransform: 'uppercase' }}>
-          FINRA Securities Industry Essentials · 2024 Outline
-        </div>
-      </div>
-      <div style={{ flex: 1, height: '4px', background: C.border, borderRadius: '2px', overflow: 'hidden', margin: '0 12px' }}>
-        <div
-          style={{
-            height: '100%',
-            width: `${pct}%`,
-            background: C.amber,
-            transition: 'width 0.4s',
-            borderRadius: '2px',
-          }}
-        />
-      </div>
-      <div style={{ fontSize: '11px', color: C.amber, minWidth: '40px', textAlign: 'right' }}>{pct}%</div>
-      <div style={{ display: 'flex', gap: '4px' }}>
-        <Btn
-          label="DASHBOARD"
-          active={view === 'dashboard'}
-          onClick={() => onViewChange('dashboard')}
-        />
-        <Btn label="TOPICS" active={view === 'topics' || view === 'chat'} onClick={() => onViewChange('topics')} />
-        <Btn label="MATH" active={view === 'math'} onClick={() => onViewChange('math')} />
-        <Btn label="CHEATSHEET" active={view === 'cheatsheet'} onClick={() => onViewChange('cheatsheet')} />
-      </div>
-    </div>
-  );
-}
+type Profile = {
+  id: string;
+  label: string;
+  pin: string;
+};
 
-function Sidebar({
-  done,
-  onToggleDone,
-  sel,
-  onSelectTopic,
-  exp,
-  onToggleExp,
-}: {
-  done: Set<string>;
-  onToggleDone: (id: string) => void;
-  sel: SelectedTopic | null;
-  onSelectTopic: (topic: any, domain: any) => void;
-  exp: Record<string, boolean>;
-  onToggleExp: (id: string) => void;
-}) {
-  return (
-    <div
-      style={{
-        width: '270px',
-        borderRight: `1px solid ${C.border}`,
-        overflowY: 'auto',
-        flexShrink: 0,
-        background: C.panel,
-      }}
-    >
-      {CURRICULUM.map(domain => {
-        const dd = domain.topics.filter(t => done.has(t.id)).length;
-        const isExp = exp[domain.id];
-        return (
-          <div key={domain.id}>
-            <div
-              onClick={() => onToggleExp(domain.id)}
-              style={{
-                padding: '10px 12px',
-                cursor: 'pointer',
-                borderBottom: `1px solid ${C.border}`,
-                background: isExp ? C.card : 'transparent',
-                userSelect: 'none',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-              }}
-            >
-              <div style={{ flex: 1 }}>
-                <div
-                  style={{
-                    fontSize: '10px',
-                    fontWeight: 'bold',
-                    color: domain.color,
-                    letterSpacing: '0.1em',
-                    textTransform: 'uppercase',
-                  }}
-                >
-                  {domain.label} · {domain.weight}
-                </div>
-                <div
-                  style={{
-                    fontSize: '11px',
-                    color: C.muted,
-                    marginTop: '2px',
-                    lineHeight: 1.3,
-                  }}
-                >
-                  {domain.title}
-                </div>
-              </div>
-              <span style={{ fontSize: '10px', color: domain.color, opacity: 0.8, flexShrink: 0 }}>
-                {dd}/{domain.topics.length}
-              </span>
-              <span
-                style={{
-                  color: C.dim,
-                  fontSize: '9px',
-                  transform: isExp ? 'rotate(90deg)' : 'none',
-                  transition: 'transform 0.2s',
-                  flexShrink: 0,
-                }}
-              >
-                ▶
-              </span>
-            </div>
-            {isExp &&
-              domain.topics.map(topic => {
-                const isDone = done.has(topic.id);
-                const isActive = sel?.topic.id === topic.id;
-                return (
-                  <div
-                    key={topic.id}
-                    onClick={() => onSelectTopic(topic, domain)}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '8px',
-                      padding: '7px 12px 7px 18px',
-                      cursor: 'pointer',
-                      background: isActive ? C.card : 'transparent',
-                      borderBottom: `1px solid ${C.bg}`,
-                      transition: 'background 0.15s',
-                    }}
-                  >
-                    <div
-                      onClick={e => {
-                        e.stopPropagation();
-                        onToggleDone(topic.id);
-                      }}
-                      style={{
-                        width: '13px',
-                        height: '13px',
-                        borderRadius: '3px',
-                        border: `1px solid ${isDone ? domain.color : C.ghost}`,
-                        background: isDone ? domain.color : 'transparent',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        flexShrink: 0,
-                        cursor: 'pointer',
-                      }}
-                    >
-                      {isDone && (
-                        <span style={{ color: '#000', fontSize: '8px', fontWeight: 'bold', lineHeight: 1 }}>
-                          ✓
-                        </span>
-                      )}
-                    </div>
-                    <div
-                      style={{
-                        flex: 1,
-                        fontSize: '11px',
-                        color: isActive ? C.text : C.muted,
-                        lineHeight: 1.35,
-                      }}
-                    >
-                      {topic.title}
-                    </div>
-                    <span style={{ fontSize: '9px', color: C.dim, flexShrink: 0 }}>{topic.code}</span>
-                  </div>
-                );
-              })}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
+const MASTERY_CORRECT_REQUIRED = 3;
 
-function Dashboard({
-  done,
-  pdf,
-  onPdfChange,
-}: {
-  done: Set<string>;
-  pdf: PdfState;
-  onPdfChange: (pdf: PdfState) => void;
-}) {
-  const fileRef = useRef<HTMLInputElement>(null);
-  const pct = Math.round((done.size / TOTAL) * 100);
-
-  const handlePDF = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const f = e.target.files?.[0];
-    if (!f) return;
-    const r = new FileReader();
-    r.onload = ev => {
-      const data = (ev.target?.result as string)?.split(',')[1];
-      onPdfChange({ b64: data || null, name: f.name });
-    };
-    r.readAsDataURL(f);
-  };
-
-  return (
-    <div style={{ flex: 1, overflowY: 'auto', padding: '20px', background: C.bg }}>
-      <div style={{ maxWidth: '760px', margin: '0 auto' }}>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px', marginBottom: '20px' }}>
-          <div
-            style={{
-              background: C.card,
-              border: `1px solid ${C.d1}22`,
-              borderRadius: '8px',
-              padding: '16px',
-              borderLeft: `3px solid ${C.d1}`,
-            }}
-          >
-            <div
-              style={{
-                fontSize: '10px',
-                color: C.dim,
-                textTransform: 'uppercase',
-                letterSpacing: '0.1em',
-                marginBottom: '4px',
-              }}
-            >
-              Overall Progress
-            </div>
-            <div style={{ fontSize: '26px', color: C.d1, fontWeight: 'bold' }}>{pct}%</div>
-            <div style={{ fontSize: '11px', color: C.dim, marginTop: '3px' }}>
-              {done.size}/{TOTAL} topics done
-            </div>
-          </div>
-          <div
-            style={{
-              background: C.card,
-              border: `1px solid ${C.d3}22`,
-              borderRadius: '8px',
-              padding: '16px',
-              borderLeft: `3px solid ${C.d3}`,
-            }}
-          >
-            <div
-              style={{
-                fontSize: '10px',
-                color: C.dim,
-                textTransform: 'uppercase',
-                letterSpacing: '0.1em',
-                marginBottom: '4px',
-              }}
-            >
-              Exam Structure
-            </div>
-            <div style={{ fontSize: '26px', color: C.d3, fontWeight: 'bold' }}>75</div>
-            <div style={{ fontSize: '11px', color: C.dim, marginTop: '3px' }}>scored · 85 total · 70% to pass</div>
-          </div>
-          <div
-            style={{
-              background: C.card,
-              border: `1px solid ${C.d4}22`,
-              borderRadius: '8px',
-              padding: '16px',
-              borderLeft: `3px solid ${C.d4}`,
-            }}
-          >
-            <div
-              style={{
-                fontSize: '10px',
-                color: C.dim,
-                textTransform: 'uppercase',
-                letterSpacing: '0.1em',
-                marginBottom: '4px',
-              }}
-            >
-              Study Book
-            </div>
-            {pdf.name ? (
-              <div style={{ fontSize: '12px', color: '#22c55e', marginTop: '4px' }}>✓ Loaded</div>
-            ) : (
-              <div style={{ fontSize: '12px', color: C.dim, marginTop: '4px' }}>Not uploaded</div>
-            )}
-            <div style={{ fontSize: '10px', color: C.dim, marginTop: '3px' }}>
-              {pdf.name ? pdf.name.slice(0, 24) : 'Upload PDF for AI context'}
-            </div>
-          </div>
-        </div>
-        {CURRICULUM.map(domain => {
-          const dd = domain.topics.filter(t => done.has(t.id)).length;
-          const dp = Math.round((dd / domain.topics.length) * 100);
-          return (
-            <div
-              key={domain.id}
-              style={{
-                marginBottom: '14px',
-                background: C.card,
-                border: `1px solid ${domain.color}22`,
-                borderRadius: '10px',
-                borderLeft: `3px solid ${domain.color}`,
-              }}
-            >
-              <div style={{ padding: '12px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div>
-                  <div
-                    style={{
-                      fontSize: '10px',
-                      fontWeight: 'bold',
-                      color: domain.color,
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.08em',
-                    }}
-                  >
-                    {domain.label} · {domain.weight} · {domain.items} exam questions
-                  </div>
-                  <div style={{ fontSize: '13px', color: C.text, marginTop: '2px' }}>{domain.title}</div>
-                </div>
-                <div style={{ fontSize: '22px', color: domain.color, fontWeight: 'bold' }}>{dp}%</div>
-              </div>
-              <div
-                style={{
-                  height: '3px',
-                  background: C.border,
-                  margin: '0 16px',
-                  borderRadius: '2px',
-                  overflow: 'hidden',
-                  marginBottom: '12px',
-                }}
-              >
-                <div
-                  style={{
-                    height: '100%',
-                    width: `${dp}%`,
-                    background: domain.color,
-                    transition: 'width 0.4s',
-                    borderRadius: '2px',
-                  }}
-                />
-              </div>
-              <div style={{ padding: '0 16px 14px', display: 'flex', flexWrap: 'wrap', gap: '5px' }}>
-                {domain.topics.map(t => {
-                  const isDone = done.has(t.id);
-                  return (
-                    <div
-                      key={t.id}
-                      style={{
-                        fontSize: '10px',
-                        padding: '3px 8px',
-                        borderRadius: '3px',
-                        cursor: 'pointer',
-                        background: isDone ? `${domain.color}18` : C.panel,
-                        color: isDone ? domain.color : C.dim,
-                        border: `1px solid ${isDone ? domain.color + '44' : C.border}`,
-                      }}
-                    >
-                      {isDone ? '✓ ' : ''}
-                      {t.code}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          );
-        })}
-        <div
-          style={{
-            background: C.card,
-            border: `1px dashed ${C.border}`,
-            borderRadius: '10px',
-            padding: '16px',
-          }}
-        >
-          <div
-            style={{
-              fontSize: '10px',
-              color: C.dim,
-              textTransform: 'uppercase',
-              letterSpacing: '0.1em',
-              marginBottom: '8px',
-            }}
-          >
-            Study Book PDF
-          </div>
-          <div
-            style={{
-              fontSize: '11px',
-              color: C.ghost,
-              marginBottom: '12px',
-            }}
-          >
-            Upload your SIE study book so the AI tutor can reference it during sessions.
-          </div>
-          {pdf.name ? (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-              <span style={{ fontSize: '11px', color: '#22c55e' }}>✓ {pdf.name}</span>
-              <button
-                onClick={() => onPdfChange({ b64: null, name: null })}
-                style={{
-                  padding: '4px 10px',
-                  background: 'transparent',
-                  border: '1px solid #7f1d1d',
-                  borderRadius: '4px',
-                  color: '#ef4444',
-                  cursor: 'pointer',
-                  fontSize: '10px',
-                  fontFamily: 'inherit',
-                }}
-              >
-                Remove
-              </button>
-            </div>
-          ) : (
-            <button
-              onClick={() => fileRef.current?.click()}
-              style={{
-                padding: '7px 14px',
-                background: 'transparent',
-                border: `1px solid ${C.border}`,
-                borderRadius: '4px',
-                color: C.muted,
-                cursor: 'pointer',
-                fontSize: '11px',
-                fontFamily: 'inherit',
-              }}
-            >
-              + Upload PDF
-            </button>
-          )}
-          <input ref={fileRef} type="file" accept=".pdf" style={{ display: 'none' }} onChange={handlePDF} />
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function ChatView({
-  sel,
-  msgs,
-  loading,
-  inp,
-  onInpChange,
-  onSend,
-  onBack,
-  speakIdx,
-  onSpeak,
-  spRate,
-  onSpRateChange,
-  voiceName,
-  pdf,
-}: {
-  sel: SelectedTopic | null;
-  msgs: ChatMessage[];
-  loading: boolean;
-  inp: string;
-  onInpChange: (v: string) => void;
-  onSend: () => void;
-  onBack: () => void;
-  speakIdx: number | string | null;
-  onSpeak: (text: string, idx: number | string) => void;
-  spRate: number;
-  onSpRateChange: (r: number) => void;
-  voiceName: string | null;
-  pdf: PdfState;
-}) {
-  const chatRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (chatRef.current) {
-      chatRef.current.scrollTop = chatRef.current.scrollHeight;
-    }
-  }, [msgs, loading]);
-
-  return (
-    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-      <div
-        style={{
-          padding: '12px 16px',
-          borderBottom: `1px solid ${C.border}`,
-          background: C.panel,
-          flexShrink: 0,
-        }}
-      >
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <button
-            onClick={onBack}
-            style={{
-              background: 'none',
-              border: 'none',
-              color: C.dim,
-              cursor: 'pointer',
-              fontSize: '12px',
-              padding: 0,
-              fontFamily: 'inherit',
-            }}
-          >
-            ← back
-          </button>
-          {sel && (
-            <div
-              style={{
-                width: '7px',
-                height: '7px',
-                borderRadius: '50%',
-                background: sel.domain.color,
-                flexShrink: 0,
-              }}
-            />
-          )}
-          <div style={{ fontSize: '13px', color: C.text, fontWeight: 'bold' }}>{sel?.topic.title ?? ''}</div>
-          <div style={{ fontSize: '10px', color: C.dim, marginLeft: 'auto' }}>{sel?.topic.code}</div>
-        </div>
-        {sel && (
-          <div style={{ fontSize: '11px', color: C.dim, marginTop: '3px' }}>
-            {sel.domain.label} · {sel.domain.title} · {sel.domain.weight} of exam
-          </div>
-        )}
-        {pdf.name && (
-          <div
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '4px',
-              fontSize: '10px',
-              color: '#22c55e',
-              background: '#0f2011',
-              border: '1px solid #166534',
-              borderRadius: '3px',
-              padding: '2px 8px',
-              marginTop: '6px',
-            }}
-          >
-            ▣ {pdf.name}
-          </div>
-        )}
-        {voiceName && (
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-              marginTop: '8px',
-              paddingTop: '8px',
-              borderTop: `1px solid ${C.border}`,
-            }}
-          >
-            <span style={{ fontSize: '10px', color: C.ghost }}>🔊 {voiceName}</span>
-            <div style={{ display: 'flex', gap: '4px', marginLeft: 'auto' }}>
-              {[0.8, 1.0, 1.2, 1.5].map(r => (
-                <button
-                  key={r}
-                  onClick={() => {
-                    onSpRateChange(r);
-                    window.speechSynthesis.cancel();
-                  }}
-                  style={{
-                    padding: '2px 6px',
-                    borderRadius: '3px',
-                    border: '1px solid',
-                    borderColor: spRate === r ? C.amber : C.border,
-                    background: spRate === r ? C.amberBg : 'transparent',
-                    color: spRate === r ? C.amber : C.dim,
-                    fontSize: '10px',
-                    cursor: 'pointer',
-                    fontFamily: 'inherit',
-                  }}
-                >
-                  {r}x
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-      </div>
-      <div
-        ref={chatRef}
-        style={{
-          flex: 1,
-          overflowY: 'auto',
-          padding: '16px',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: '10px',
-        }}
-      >
-        {msgs
-          .filter((m, i) => !(i === 0 && m.role === 'user'))
-          .map((msg, i) => (
-            <div
-              key={i}
-              style={{
-                display: 'flex',
-                justifyContent: msg.role === 'user' ? 'flex-end' : 'flex-start',
-                alignItems: 'flex-start',
-                gap: '6px',
-              }}
-            >
-              {msg.role === 'assistant' && (
-                <button
-                  title={speakIdx === i ? 'Stop' : 'Listen'}
-                  onClick={() => onSpeak(msg.content, i)}
-                  style={{
-                    background: 'none',
-                    border: 'none',
-                    cursor: 'pointer',
-                    padding: '4px 5px',
-                    borderRadius: '4px',
-                    color: speakIdx === i ? C.amber : C.ghost,
-                    fontSize: '13px',
-                    lineHeight: 1,
-                    flexShrink: 0,
-                    marginTop: '2px',
-                  }}
-                >
-                  {speakIdx === i ? '⏹' : '🔊'}
-                </button>
-              )}
-              <div
-                style={{
-                  maxWidth: '78%',
-                  padding: '10px 14px',
-                  borderRadius: msg.role === 'user' ? '12px 12px 2px 12px' : '12px 12px 12px 2px',
-                  background: msg.role === 'user' ? C.amberBg : C.card,
-                  border: `1px solid ${msg.role === 'user' ? C.amberDim : C.border}`,
-                  color: msg.role === 'user' ? '#fcd34d' : C.muted,
-                  fontSize: '12px',
-                  lineHeight: 1.75,
-                  whiteSpace: 'pre-wrap',
-                  wordBreak: 'break-word',
-                }}
-              >
-                {msg.content.split('\n').map((line, j, arr) => (
-                  <span key={j}>
-                    {line.replace(/\[DEF\]/g, '📌').replace(/\[EXAM TIP\]/g, '⚡')}
-                    {j < arr.length - 1 && <br />}
-                  </span>
-                ))}
-              </div>
-            </div>
-          ))}
-        {loading && (
-          <div style={{ display: 'flex', alignItems: 'flex-start', gap: '6px' }}>
-            <div style={{ width: '26px', flexShrink: 0 }} />
-            <div
-              style={{
-                padding: '10px 14px',
-                borderRadius: '12px 12px 12px 2px',
-                background: C.card,
-                border: `1px solid ${C.border}`,
-                color: C.dim,
-                fontSize: '12px',
-              }}
-            >
-              <span
-                style={{
-                  animation: 'pulse 1.2s infinite',
-                  display: 'inline-block',
-                  color: C.amber,
-                }}
-              >
-                ■
-              </span>{' '}
-              thinking...
-            </div>
-          </div>
-        )}
-      </div>
-      <div
-        style={{
-          display: 'flex',
-          gap: '8px',
-          padding: '12px 16px',
-          borderTop: `1px solid ${C.border}`,
-          background: C.panel,
-          flexShrink: 0,
-          alignItems: 'flex-end',
-        }}
-      >
-        <textarea
-          value={inp}
-          onChange={e => onInpChange(e.target.value)}
-          onKeyDown={e => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-              e.preventDefault();
-              onSend();
-            }
-          }}
-          rows={2}
-          placeholder="Answer the question, say 'go deeper', 'give me another', 'explain differently', 'mnemonic'…"
-          style={{
-            flex: 1,
-            background: C.card,
-            border: `1px solid ${C.border}`,
-            borderRadius: '6px',
-            color: C.text,
-            padding: '8px 12px',
-            fontSize: '12px',
-            resize: 'none',
-            outline: 'none',
-            fontFamily: 'inherit',
-            lineHeight: 1.5,
-          }}
-        />
-        <button
-          onClick={onSend}
-          disabled={!inp.trim() || loading || !sel}
-          style={{
-            padding: '8px 16px',
-            background: !inp.trim() || loading || !sel ? C.ghost : '#92400e',
-            color: !inp.trim() || loading || !sel ? C.dim : '#fcd34d',
-            border: 'none',
-            borderRadius: '6px',
-            cursor: !inp.trim() || loading || !sel ? 'not-allowed' : 'pointer',
-            fontSize: '12px',
-            fontFamily: 'inherit',
-            fontWeight: 'bold',
-            letterSpacing: '0.05em',
-            flexShrink: 0,
-          }}
-        >
-          SEND
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function MathSheet({ speakIdx, onSpeak }: { speakIdx: number | string | null; onSpeak: (text: string, idx: number | string) => void }) {
-  return (
-    <div style={{ flex: 1, overflowY: 'auto', padding: '20px', background: C.bg }}>
-      <div style={{ maxWidth: '820px', margin: '0 auto' }}>
-        <div style={{ marginBottom: '24px' }}>
-          <div
-            style={{
-              fontSize: '10px',
-              color: C.dim,
-              letterSpacing: '0.15em',
-              textTransform: 'uppercase',
-              marginBottom: '4px',
-            }}
-          >
-            SIE Exam Reference
-          </div>
-          <div
-            style={{
-              fontSize: '20px',
-              color: C.text,
-              fontWeight: 'bold',
-              letterSpacing: '0.04em',
-            }}
-          >
-            Math Equation Cheat Sheet
-          </div>
-          <div style={{ fontSize: '12px', color: C.dim, marginTop: '6px' }}>
-            Every formula tested on the SIE. Click 🔊 on any card to hear it read aloud.
-          </div>
-        </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(360px,1fr))', gap: '16px', marginBottom: '16px' }}>
-          {MATH.map((f, i) => (
-            <div
-              key={f.id}
-              style={{
-                background: C.card,
-                border: `1px solid ${f.color}30`,
-                borderRadius: '10px',
-                borderLeft: `3px solid ${f.color}`,
-                overflow: 'hidden',
-              }}
-            >
-              <div
-                style={{
-                  padding: '14px 16px',
-                  borderBottom: `1px solid ${C.border}`,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                }}
-              >
-                <div>
-                  <div
-                    style={{
-                      fontSize: '9px',
-                      color: f.color,
-                      letterSpacing: '0.12em',
-                      textTransform: 'uppercase',
-                      marginBottom: '3px',
-                    }}
-                  >
-                    Formula {i + 1}
-                  </div>
-                  <div style={{ fontSize: '14px', color: C.text, fontWeight: 'bold' }}>{f.title}</div>
-                </div>
-                <button
-                  title="Listen"
-                  onClick={() => onSpeak(`${f.title}: ${f.formula}`, `m${i}`)}
-                  style={{
-                    background: 'none',
-                    border: 'none',
-                    cursor: 'pointer',
-                    color: speakIdx === `m${i}` ? C.amber : C.dim,
-                    fontSize: '14px',
-                    lineHeight: 1,
-                    padding: '4px',
-                  }}
-                >
-                  {speakIdx === `m${i}` ? '⏹' : '🔊'}
-                </button>
-              </div>
-              <div style={{ padding: '14px 16px' }}>
-                <div
-                  style={{
-                    fontFamily: 'monospace',
-                    fontSize: '11.5px',
-                    color: f.color,
-                    background: `${f.color}0d`,
-                    borderRadius: '6px',
-                    padding: '10px 12px',
-                    marginBottom: '12px',
-                    lineHeight: 2,
-                    whiteSpace: 'pre-wrap',
-                  }}
-                >
-                  {f.formula}
-                </div>
-                {f.parts.map((p, j) => (
-                  <div key={j} style={{ display: 'flex', gap: '8px', marginBottom: '6px', fontSize: '11px' }}>
-                    <span
-                      style={{
-                        color: f.color,
-                        flexShrink: 0,
-                        minWidth: '140px',
-                        fontWeight: 'bold',
-                      }}
-                    >
-                      {p.label}
-                    </span>
-                    <span style={{ color: C.muted }}>{p.desc}</span>
-                  </div>
-                ))}
-                <div style={{ marginTop: '14px', borderTop: `1px solid ${C.border}`, paddingTop: '12px' }}>
-                  <div
-                    style={{
-                      fontSize: '9px',
-                      color: C.dim,
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.12em',
-                      marginBottom: '6px',
-                    }}
-                  >
-                    Example
-                  </div>
-                  <div
-                    style={{
-                      fontSize: '11px',
-                      color: C.muted,
-                      marginBottom: '5px',
-                    }}
-                  >
-                    {f.example.q}
-                  </div>
-                  <div
-                    style={{
-                      fontSize: '12px',
-                      color: '#34d399',
-                      fontFamily: 'monospace',
-                      fontWeight: 'bold',
-                    }}
-                  >
-                    {f.example.a}
-                  </div>
-                </div>
-                <div
-                  style={{
-                    marginTop: '10px',
-                    fontSize: '11px',
-                    color: C.dim,
-                    background: C.panel,
-                    borderRadius: '5px',
-                    padding: '8px 10px',
-                    lineHeight: 1.65,
-                    borderLeft: `2px solid ${f.color}66`,
-                  }}
-                >
-                  ⚡ {f.rule}
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function CheatSheet() {
-  return (
-    <div
-      style={{
-        flex: 1,
-        overflowY: 'auto',
-        background: C.bg,
-        padding: '20px',
-      }}
-    >
-      <div style={{ maxWidth: '1400px', margin: '0 auto' }}>
-        <div style={{ marginBottom: '24px' }}>
-          <div
-            style={{
-              fontSize: '16px',
-              fontWeight: 'bold',
-              color: C.amber,
-              letterSpacing: '0.1em',
-              marginBottom: '8px',
-            }}
-          >
-            SIE QUICK REFERENCE CHEATSHEET
-          </div>
-          <div style={{ fontSize: '12px', color: C.dim }}>
-            Essential formulas, rules, and definitions for SIE exam mastery
-          </div>
-        </div>
-
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
-            gap: '16px',
-          }}
-        >
-          {CHEATSHEET.map(item => (
-            <div
-              key={item.id}
-              style={{
-                background: C.card,
-                border: `1px solid ${C.border}`,
-                borderRadius: '8px',
-                padding: '16px',
-                borderLeft: `3px solid ${item.color}`,
-              }}
-            >
-              <div
-                style={{
-                  fontSize: '10px',
-                  color: item.color,
-                  fontWeight: 'bold',
-                  letterSpacing: '0.1em',
-                  textTransform: 'uppercase',
-                  marginBottom: '6px',
-                }}
-              >
-                {item.category}
-              </div>
-              <div
-                style={{
-                  fontSize: '13px',
-                  fontWeight: 'bold',
-                  color: C.text,
-                  marginBottom: '8px',
-                }}
-              >
-                {item.title}
-              </div>
-              <div
-                style={{
-                  fontSize: '11px',
-                  color: item.color,
-                  fontFamily: 'monospace',
-                  background: `${item.color}0d`,
-                  padding: '8px 10px',
-                  borderRadius: '4px',
-                  marginBottom: '10px',
-                  lineHeight: 1.6,
-                  whiteSpace: 'pre-wrap',
-                  wordBreak: 'break-word',
-                }}
-              >
-                {item.content}
-              </div>
-              {item.rules && item.rules.length > 0 && (
-                <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: '10px' }}>
-                  {item.rules.map((rule, idx) => (
-                    <div
-                      key={idx}
-                      style={{
-                        fontSize: '10px',
-                        color: C.muted,
-                        marginBottom: '4px',
-                        paddingLeft: '10px',
-                        borderLeft: `2px solid ${item.color}66`,
-                      }}
-                    >
-                      • {rule}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
+const PROFILES: Profile[] = [
+  { id: 'daniel', label: 'Daniel', pin: (import.meta.env.VITE_PIN_DANIEL ?? import.meta.env.VITE_PIN_DAN ?? '').trim() },
+  { id: 'dad', label: 'Dad', pin: '2503' },
+  { id: 'mom', label: 'Mom', pin: '2504' },
+];
 
 export default function App() {
-  const [done, setDone] = useState<Set<string>>(() => loadDone());
+  const [activeProfile, setActiveProfile] = useState<string | null>(() => loadActiveProfile());
+  const [done, setDone] = useState<Set<string>>(() => (activeProfile ? loadDone(activeProfile) : new Set()));
+  const [modal, setModal] = useState<'math' | 'cheatsheet' | null>(null);
+  const [showTour, setShowTour] = useState(false);
+  const [tourDontShowAgain, setTourDontShowAgain] = useState(false);
+  const [memory, setMemory] = useState<MemorySummary>({ adaptiveBrief: '', weakTopicIds: [], recentScores: [] });
+  const [lastTopicId, setLastTopicId] = useState<string | null>(null);
   const [sel, setSel] = useState<SelectedTopic | null>(null);
   const [msgs, setMsgs] = useState<ChatMessage[]>([]);
   const [inp, setInp] = useState('');
   const [loading, setLoading] = useState(false);
-  const [pdf, setPdf] = useState<PdfState>({ b64: null, name: null });
   const [ready, setReady] = useState(false);
   const [exp, setExp] = useState<Record<string, boolean>>({ d1: true, d2: false, d3: false, d4: false });
-  const [view, setView] = useState<View>('topics');
+  const [view, setView] = useState<View>('overview');
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [speakIdx, setSpeakIdx] = useState<number | string | null>(null);
   const [spRate, setSpRate] = useState(1.0);
   const [voiceName, setVoiceName] = useState<string | null>(null);
   const voiceRef = useRef<SpeechSynthesisVoice | null>(null);
+  const streamRunRef = useRef(0);
+  const activeTopicIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     setReady(true);
@@ -1072,18 +95,98 @@ export default function App() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!activeProfile) {
+      setDone(new Set());
+      setMemory({ adaptiveBrief: '', weakTopicIds: [], recentScores: [] });
+      setLastTopicId(null);
+      setShowTour(false);
+      setTourDontShowAgain(false);
+      return;
+    }
+    const localDone = loadDone(activeProfile);
+    setDone(localDone);
+
+    void (async () => {
+      const remoteDone = await loadProgress(activeProfile);
+      if (remoteDone && remoteDone.length) {
+        const merged = new Set<string>([...localDone, ...remoteDone]);
+        setDone(merged);
+        saveDone(merged, activeProfile);
+      }
+      const memorySummary = await loadMemorySummary(activeProfile);
+      setMemory(memorySummary);
+      const remoteLastTopic = await loadLastTopic(activeProfile);
+      setLastTopicId(remoteLastTopic);
+
+      const hidden = loadTourHidden(activeProfile);
+      setTourDontShowAgain(hidden);
+      setShowTour(!hidden);
+    })();
+  }, [activeProfile]);
+
+  useEffect(() => {
+    applyTheme('light');
+    document.documentElement.style.colorScheme = 'light';
+    document.body.style.colorScheme = 'light';
+    document.body.style.background = C.bg;
+    document.body.style.color = C.text;
+  }, [activeProfile]);
+
+  useEffect(() => {
+    if (!activeProfile) return;
+    void syncProgress(activeProfile, [...done]);
+  }, [done, activeProfile]);
+
+  useEffect(() => {
+    activeTopicIdRef.current = sel?.topic.id ?? null;
+  }, [sel]);
+
   const pct = Math.round((done.size / TOTAL) * 100);
 
-  const toggleDone = useCallback(
-    (id: string) => {
-      setDone(prev => {
-        const n = new Set(prev);
-        n.has(id) ? n.delete(id) : n.add(id);
-        saveDone(n);
-        return n;
-      });
+  const log = useCallback(
+    (eventType: string, payload: Record<string, unknown> = {}) => {
+      if (!activeProfile) return;
+      void logEvent(activeProfile, eventType, payload);
     },
-    []
+    [activeProfile]
+  );
+
+  const applyReviewOutcome = useCallback(
+    (topicId: string, correct: boolean) => {
+      if (!activeProfile) return;
+      reviewObjective(activeProfile, topicId, correct ? 'correct' : 'needsWork');
+    },
+    [activeProfile]
+  );
+
+  const markTopicPassed = useCallback(
+    (topicId: string, messages: ChatMessage[]) => {
+      if (!activeProfile) return;
+      const correct = countCorrectAnswers(messages);
+      if (correct < MASTERY_CORRECT_REQUIRED) return;
+
+      setDone((prev) => {
+        if (prev.has(topicId)) return prev;
+        const next = new Set(prev);
+        next.add(topicId);
+        saveDone(next, activeProfile);
+        return next;
+      });
+      log('topic_auto_passed', { topicId, correct });
+    },
+    [activeProfile, log]
+  );
+
+  const isTopicUnlocked = useCallback(
+    (topicId: string) => {
+      const ordered = CURRICULUM.flatMap((d) => d.topics.map((t) => t.id));
+      const idx = ordered.indexOf(topicId);
+      if (idx <= 0) return true;
+      const prevId = ordered[idx - 1];
+      return done.has(topicId) || done.has(prevId);
+    },
+    [done]
   );
 
   const speak = useCallback(
@@ -1107,11 +210,42 @@ export default function App() {
   );
 
   const openTopic = useCallback(
-    async (topic: any, domain: any) => {
+    async (topic: Topic, domain: Domain) => {
+      if (!activeProfile) return;
+      if (!isTopicUnlocked(topic.id)) {
+        log('locked_topic_attempted', { topicId: topic.id });
+        return;
+      }
+      streamRunRef.current += 1;
+      const runId = streamRunRef.current;
+      const isCurrentRun = () => streamRunRef.current === runId && activeTopicIdRef.current === topic.id;
+
       window.speechSynthesis.cancel();
       setSpeakIdx(null);
       setSel({ topic, domain });
       setView('chat');
+      activeTopicIdRef.current = topic.id;
+      setLastTopicId(topic.id);
+      void saveLastTopic(activeProfile, topic.id);
+      log('topic_opened', { topicId: topic.id, topicCode: topic.code });
+
+      const remote = await loadTopicChatRemote(activeProfile, topic.id);
+      if (remote && remote.length > 0) {
+        if (isCurrentRun()) setMsgs(remote);
+        saveTopicChat(activeProfile, topic.id, remote);
+        markTopicPassed(topic.id, remote);
+        if (isCurrentRun()) setLoading(false);
+        return;
+      }
+
+      const cached = loadTopicChat(activeProfile, topic.id);
+      if (cached.length > 0) {
+        if (isCurrentRun()) setMsgs(cached as ChatMessage[]);
+        markTopicPassed(topic.id, cached as ChatMessage[]);
+        if (isCurrentRun()) setLoading(false);
+        return;
+      }
+
       const init: ChatMessage[] = [
         {
           role: 'user',
@@ -1121,31 +255,176 @@ export default function App() {
       setMsgs(init);
       setLoading(true);
       try {
-        const r = await callClaude(init, topic, domain, pdf);
-        setMsgs([...init, { role: 'assistant', content: r }]);
+        if (isCurrentRun()) setMsgs(upsertAssistantMessage(init, ''));
+        const r = await callClaude(init, topic, domain, memory.adaptiveBrief, (snapshot) => {
+          if (!isCurrentRun()) return;
+          setMsgs((prev) => upsertAssistantMessage(prev, snapshot));
+        });
+        const next = upsertAssistantMessage(init, r);
+        if (isCurrentRun()) setMsgs(next);
+        saveTopicChat(activeProfile, topic.id, next);
+        await saveTopicChatRemote(activeProfile, topic.id, next);
+        markTopicPassed(topic.id, next);
+        const outcome = parseAssistantOutcome(r);
+        if (outcome !== 'neutral') {
+          applyReviewOutcome(topic.id, outcome === 'correct');
+        }
+        await saveChatMemory({
+          profileId: activeProfile,
+          topicId: topic.id,
+          userMessage: init[0].content,
+          assistantMessage: r,
+        });
+        log('topic_bootstrap_generated', { topicId: topic.id });
       } catch (e) {
-        setMsgs([...init, { role: 'assistant', content: `Error: ${(e as Error).message}` }]);
+        const next = [...init, { role: 'assistant' as const, content: `Error: ${(e as Error).message}` }];
+        if (isCurrentRun()) setMsgs(next);
+        saveTopicChat(activeProfile, topic.id, next);
+        await saveTopicChatRemote(activeProfile, topic.id, next);
+        log('topic_bootstrap_error', { topicId: topic.id });
       }
-      setLoading(false);
+      if (isCurrentRun()) setLoading(false);
     },
-    [pdf]
+    [activeProfile, memory.adaptiveBrief, log, markTopicPassed, applyReviewOutcome, isTopicUnlocked]
+  );
+
+  const sendWithText = useCallback(
+    async (rawText: string) => {
+      if (!rawText.trim() || loading || !sel || !activeProfile) return;
+      streamRunRef.current += 1;
+      const runId = streamRunRef.current;
+      const txt = rawText.trim();
+      const topicId = sel.topic.id;
+      const isCurrentRun = () => streamRunRef.current === runId && activeTopicIdRef.current === topicId;
+
+      const next = [...msgs, { role: 'user' as const, content: txt }];
+      setMsgs(next);
+      saveTopicChat(activeProfile, topicId, next);
+      await saveTopicChatRemote(activeProfile, topicId, next);
+
+      setLoading(true);
+      log('chat_user_message', { topicId, length: txt.length });
+      try {
+        if (isCurrentRun()) setMsgs(upsertAssistantMessage(next, ''));
+        const r = await callClaude(next, sel.topic, sel.domain, memory.adaptiveBrief, (snapshot) => {
+          if (!isCurrentRun()) return;
+          setMsgs((prev) => upsertAssistantMessage(prev, snapshot));
+        });
+        const full = upsertAssistantMessage(next, r);
+        if (isCurrentRun()) setMsgs(full);
+        saveTopicChat(activeProfile, topicId, full);
+        await saveTopicChatRemote(activeProfile, topicId, full);
+        markTopicPassed(topicId, full);
+        const outcome = parseAssistantOutcome(r);
+        if (outcome !== 'neutral') {
+          applyReviewOutcome(topicId, outcome === 'correct');
+        }
+        await saveChatMemory({
+          profileId: activeProfile,
+          topicId,
+          userMessage: txt,
+          assistantMessage: r,
+        });
+        log('chat_assistant_message', { topicId, length: r.length });
+      } catch (e) {
+        const full = [...next, { role: 'assistant' as const, content: `Error: ${(e as Error).message}` }];
+        if (isCurrentRun()) setMsgs(full);
+        saveTopicChat(activeProfile, topicId, full);
+        await saveTopicChatRemote(activeProfile, topicId, full);
+        log('chat_assistant_error', { topicId });
+      }
+      if (isCurrentRun()) setLoading(false);
+    },
+    [loading, sel, msgs, activeProfile, memory.adaptiveBrief, log, markTopicPassed, applyReviewOutcome]
   );
 
   const send = useCallback(async () => {
-    if (!inp.trim() || loading || !sel) return;
+    if (!inp.trim()) return;
     const txt = inp.trim();
     setInp('');
-    const next = [...msgs, { role: 'user' as const, content: txt }];
-    setMsgs(next);
-    setLoading(true);
-    try {
-      const r = await callClaude(next, sel.topic, sel.domain, pdf);
-      setMsgs([...next, { role: 'assistant', content: r }]);
-    } catch (e) {
-      setMsgs([...next, { role: 'assistant', content: `Error: ${(e as Error).message}` }]);
+    await sendWithText(txt);
+  }, [inp, sendWithText]);
+
+  const sendQuickAnswer = useCallback(async (choice: string) => {
+    await sendWithText(choice);
+  }, [sendWithText]);
+
+  const findTopicById = useCallback((topicId: string) => {
+    for (const domain of CURRICULUM) {
+      const topic = domain.topics.find((t) => t.id === topicId);
+      if (topic) return { topic, domain };
     }
-    setLoading(false);
-  }, [inp, loading, sel, msgs, pdf]);
+    return null;
+  }, []);
+
+  const openSectionFromOverview = useCallback((sectionId: string) => {
+    setModal(null);
+    setView('topics');
+    setSel(null);
+    setMsgs([]);
+    setExp((prev) => ({ ...prev, [sectionId]: true }));
+  }, []);
+
+  const resetSectionMastery = useCallback(
+    async (sectionId: string) => {
+      if (!activeProfile) return;
+      const section = CURRICULUM.find((d) => d.id === sectionId);
+      if (!section) return;
+
+      const topicIds = new Set(section.topics.map((t) => t.id));
+      setDone((prev) => {
+        const next = new Set([...prev].filter((id) => !topicIds.has(id)));
+        saveDone(next, activeProfile);
+        return next;
+      });
+      clearObjectives(activeProfile, [...topicIds]);
+      log('overview_reset_section_mastery_completed', { sectionId, topics: section.topics.length });
+    },
+    [activeProfile, log]
+  );
+
+  const resetAllMastery = useCallback(async () => {
+    if (!activeProfile) return;
+    const next = new Set<string>();
+    setDone(next);
+    saveDone(next, activeProfile);
+    clearObjectives(activeProfile);
+    log('overview_reset_all_mastery_completed', { preservesDailyHistory: true });
+  }, [activeProfile, log]);
+
+  const restartSectionQuestions = useCallback(
+    async (sectionId: string) => {
+      if (!activeProfile) return;
+      const section = CURRICULUM.find((d) => d.id === sectionId);
+      if (!section) return;
+
+      for (const topic of section.topics) {
+        saveTopicChat(activeProfile, topic.id, []);
+        await saveTopicChatRemote(activeProfile, topic.id, []);
+      }
+
+      if (sel && section.topics.some((t) => t.id === sel.topic.id)) {
+        setMsgs([]);
+        setSel(null);
+      }
+
+      log('overview_restart_section_questions_completed', { sectionId, topics: section.topics.length, preservesDailyHistory: true });
+    },
+    [activeProfile, sel, log]
+  );
+
+  const restartAllQuestions = useCallback(async () => {
+    if (!activeProfile) return;
+    for (const section of CURRICULUM) {
+      for (const topic of section.topics) {
+        saveTopicChat(activeProfile, topic.id, []);
+        await saveTopicChatRemote(activeProfile, topic.id, []);
+      }
+    }
+    setMsgs([]);
+    setSel(null);
+    log('overview_restart_all_questions_completed', { preservesDailyHistory: true });
+  }, [activeProfile, log]);
 
   if (!ready)
     return (
@@ -1157,14 +436,37 @@ export default function App() {
           justifyContent: 'center',
           background: C.bg,
           color: C.amber,
-          fontFamily: "'Courier New',monospace",
+          fontFamily: "'Poppins','Segoe UI',sans-serif",
         }}
       >
         Loading...
       </div>
     );
 
+  if (!activeProfile) {
+    return (
+      <AccessGate
+        profiles={PROFILES}
+        onUnlock={(profileId) => {
+          saveActiveProfile(profileId);
+          setActiveProfile(profileId);
+          void logEvent(profileId, 'profile_unlocked', {});
+          setView('overview');
+          setSel(null);
+          setMsgs([]);
+          setInp('');
+        }}
+      />
+    );
+  }
+
   const isTopicView = view === 'topics' || view === 'chat';
+  const profileLabel = (PROFILES.find((p) => p.id === activeProfile)?.label ?? activeProfile).toUpperCase();
+  const viewFallback = (
+    <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: C.dim, background: C.bg }}>
+      Loading...
+    </div>
+  );
 
   return (
     <div
@@ -1172,29 +474,103 @@ export default function App() {
         display: 'flex',
         flexDirection: 'column',
         height: '100vh',
-        fontFamily: "'Courier New',monospace",
+        fontFamily: "'Poppins','Segoe UI',sans-serif",
         background: C.bg,
         color: C.text,
-        fontSize: '13px',
+        fontSize: '16px',
       }}
     >
       <style>{`@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.3}}*{box-sizing:border-box}::-webkit-scrollbar{width:4px}::-webkit-scrollbar-track{background:${C.bg}}::-webkit-scrollbar-thumb{background:${C.border};border-radius:2px}`}</style>
-      <Header pct={pct} view={view} onViewChange={setView} />
+      <AppHeader
+        pct={pct}
+        profileLabel={profileLabel}
+      />
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-        {view === 'dashboard' && <Dashboard done={done} pdf={pdf} onPdfChange={setPdf} />}
-        {view === 'math' && <MathSheet speakIdx={speakIdx} onSpeak={speak} />}
-        {view === 'cheatsheet' && <CheatSheet />}
+        {view === 'overview' && (
+          <Suspense fallback={viewFallback}>
+            <OverviewView
+              profileId={activeProfile}
+              profileLabel={profileLabel}
+              familyProfiles={PROFILES.map((p) => ({ id: p.id, label: p.label }))}
+              done={done}
+              onOpenSection={openSectionFromOverview}
+              onResetSection={resetSectionMastery}
+              onResetAll={resetAllMastery}
+              onRestartSectionQuestions={restartSectionQuestions}
+              onRestartAllQuestions={restartAllQuestions}
+              onLog={log}
+            />
+          </Suspense>
+        )}
+        {view === 'daily' && (
+          <Suspense fallback={viewFallback}>
+            <DailyTestView
+              profileId={activeProfile}
+              memory={memory}
+              onLog={log}
+              onSaved={() => {
+                void loadMemorySummary(activeProfile).then(setMemory);
+              }}
+              onOutcome={applyReviewOutcome}
+            />
+          </Suspense>
+        )}
+        {view === 'mock' && (
+          <Suspense fallback={viewFallback}>
+            <MockExamView
+              profileId={activeProfile}
+              memory={memory}
+              onLog={log}
+              onOutcome={applyReviewOutcome}
+            />
+          </Suspense>
+        )}
         {isTopicView && (
           <>
             <Sidebar
+              profileId={activeProfile}
               done={done}
-              onToggleDone={toggleDone}
               sel={sel}
               onSelectTopic={openTopic}
               exp={exp}
-              onToggleExp={id => setExp(p => ({ ...p, [id]: !p[id] }))}
+              onToggleExp={(id) => setExp((p) => ({ ...p, [id]: !p[id] }))}
+              collapsed={sidebarCollapsed}
+              onToggleCollapsed={() => setSidebarCollapsed((v) => !v)}
+              view={view}
+              onViewChange={(next) => {
+                if (next === 'topics' && lastTopicId) {
+                  const found = findTopicById(lastTopicId);
+                  if (found) {
+                    void openTopic(found.topic, found.domain);
+                    log('view_changed', { view: 'chat', source: 'resume_last_topic', topicId: lastTopicId });
+                    return;
+                  }
+                }
+                setView(next);
+                log('view_changed', { view: next });
+              }}
+              profileLabel={profileLabel}
+              onOpenTour={() => {
+                setShowTour(true);
+                log('tour_opened', { source: 'sidebar_menu' });
+              }}
+              onSwitchProfile={() => {
+                log('profile_switch_clicked', {});
+                clearActiveProfile();
+                setActiveProfile(null);
+                setView('overview');
+                setSel(null);
+                setMsgs([]);
+                setInp('');
+                setLoading(false);
+                setModal(null);
+                setLastTopicId(null);
+                window.speechSynthesis.cancel();
+                setSpeakIdx(null);
+              }}
             />
-            {view === 'topics' ? (
+            <div style={{ flex: 1, minHeight: 0, display: 'flex' }}>
+              {view === 'topics' ? (
               <div
                 style={{
                   flex: 1,
@@ -1220,34 +596,85 @@ export default function App() {
                 <div
                   style={{
                     fontSize: '12px',
-                    color: C.border,
+                    color: C.dim,
                     textAlign: 'center',
                     lineHeight: 2,
                   }}
                 >
-                  {`Click any topic in the sidebar\nCheck ✓ to mark as mastered\nUpload your book PDF in Dashboard`}
+                  {`Pick one topic on the left\nChat will coach you step-by-step\nProgress unlocks the next topic`}
                 </div>
               </div>
-            ) : (
-              <ChatView
-                sel={sel}
-                msgs={msgs}
-                loading={loading}
-                inp={inp}
-                onInpChange={setInp}
-                onSend={send}
-                onBack={() => setView('topics')}
-                speakIdx={speakIdx}
-                onSpeak={speak}
-                spRate={spRate}
-                onSpRateChange={setSpRate}
-                voiceName={voiceName}
-                pdf={pdf}
-              />
-            )}
+              ) : (
+                <Suspense fallback={viewFallback}>
+                  <ChatView
+                    sel={sel}
+                    msgs={msgs}
+                    loading={loading}
+                    inp={inp}
+                    onInpChange={setInp}
+                    onSend={send}
+                    onQuickAnswer={sendQuickAnswer}
+                    speakIdx={speakIdx}
+                    onSpeak={speak}
+                    spRate={spRate}
+                    onSpRateChange={setSpRate}
+                    voiceName={voiceName}
+                  />
+                </Suspense>
+              )}
+            </div>
           </>
         )}
       </div>
+      {modal === 'math' && (
+        <OverlayModal
+          title="Math Formula Sheet"
+          onClose={() => {
+            setModal(null);
+            log('modal_closed', { modal: 'math' });
+          }}
+        >
+          <Suspense fallback={viewFallback}>
+            <MathSheet speakIdx={speakIdx} onSpeak={speak} embedded />
+          </Suspense>
+        </OverlayModal>
+      )}
+      {modal === 'cheatsheet' && (
+        <OverlayModal
+          title="SIE Cheatsheet"
+          onClose={() => {
+            setModal(null);
+            log('modal_closed', { modal: 'cheatsheet' });
+          }}
+        >
+          <Suspense fallback={viewFallback}>
+            <CheatSheet embedded />
+          </Suspense>
+        </OverlayModal>
+      )}
+      {showTour && (
+        <OverlayModal
+          title="Welcome Tour"
+          onClose={() => {
+            setShowTour(false);
+            if (activeProfile) saveTourHidden(activeProfile, tourDontShowAgain);
+            log('tour_closed', { dontShowAgain: tourDontShowAgain });
+          }}
+        >
+          <WalkthroughContent
+            dontShowAgain={tourDontShowAgain}
+            onDontShowAgainChange={(value) => {
+              setTourDontShowAgain(value);
+              if (activeProfile) saveTourHidden(activeProfile, value);
+            }}
+            onClose={() => {
+              setShowTour(false);
+              if (activeProfile) saveTourHidden(activeProfile, tourDontShowAgain);
+              log('tour_completed', { dontShowAgain: tourDontShowAgain });
+            }}
+          />
+        </OverlayModal>
+      )}
     </div>
   );
 }

@@ -1,18 +1,25 @@
-export const C = {
-  bg: '#09090f',
-  panel: '#0d0d1a',
-  card: '#111128',
-  border: '#1a1a2e',
-  borderHi: '#252545',
-  amber: '#f59e0b',
-  amberDim: '#78350f',
-  amberBg: '#1c1400',
-  text: '#e2e8f0',
-  muted: '#94a3b8',
-  dim: '#475569',
-  ghost: '#1e293b',
-  d1: '#f59e0b',
-  d2: '#3b82f6',
-  d3: '#10b981',
-  d4: '#a78bfa',
-} as const;
+const LIGHT = {
+  bg: '#f5f7fb',
+  panel: '#eef3f9',
+  card: '#ffffff',
+  border: '#dbe4f1',
+  borderHi: '#9bb1cf',
+  amber: '#2563eb',
+  amberDim: '#1e4fd0',
+  amberBg: '#e8efff',
+  text: '#0f172a',
+  muted: '#1f2937',
+  dim: '#64748b',
+  ghost: '#94a3b8',
+  d1: '#2563eb',
+  d2: '#0891b2',
+  d3: '#16a34a',
+  d4: '#f59e0b',
+};
+
+export const C = { ...LIGHT };
+
+export function applyTheme(mode: 'dark' | 'light'): void {
+  void mode;
+  Object.assign(C, LIGHT);
+}

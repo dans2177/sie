@@ -1,5 +1,5 @@
 import { C } from './colors';
-import type { Domain } from '../types';
+import type { Domain } from '../types/index';
 
 export const CURRICULUM: Domain[] = [
   {

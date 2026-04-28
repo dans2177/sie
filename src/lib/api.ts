@@ -1,74 +1,114 @@
-import Anthropic from '@anthropic-ai/sdk';
-import type { Domain, Topic, ChatMessage, PdfState } from '../types';
+import type { ChatMessage, Domain, Topic } from '../types/index';
 
-const client = new Anthropic({
-  apiKey: import.meta.env.VITE_ANTHROPIC_API_KEY,
-  dangerouslyAllowBrowser: true,
-});
+const CHAT_TIMEOUT_MS = 60000;
 
-export function buildSystemPrompt(topic: Topic | null, domain: Domain | null, hasPdf: boolean): string {
-  return `You are a focused SIE exam tutor. Current topic: "${topic?.title ?? ''}" — ${domain?.label ?? ''}: ${domain?.title ?? ''} (${domain?.weight ?? ''} of exam, ~${domain?.items ?? ''} questions).
+async function callClaudeServerStream(
+  messages: ChatMessage[],
+  topic: Topic | null,
+  domain: Domain | null,
+  adaptiveBrief: string | undefined,
+  onDelta: (snapshot: string, delta: string) => void,
+): Promise<string> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), CHAT_TIMEOUT_MS);
 
-Rules:
-- Concise, exam-focused. No filler. Keep initial response under 350 words unless asked to go deeper.
-- Mark key terms [DEF] and top exam traps [EXAM TIP].
-- After your initial explanation, always end with ONE practice exam-style multiple-choice question (4 options, A–D).
-- If they answer correctly, confirm and give a harder follow-up. If wrong, explain why and retry.
-- Cite FINRA/SEC rule numbers when directly relevant.
-- Use mnemonics where genuinely helpful.
-${hasPdf ? '- A study book PDF has been provided — reference it when relevant.' : ''}`;
-}
+  try {
+    const res = await fetch('/api/topic-ai', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages, topic, domain, adaptiveBrief, stream: true }),
+      signal: controller.signal,
+    });
 
-interface ContentBlock {
-  type: 'document';
-  source: {
-    type: 'base64';
-    media_type: 'application/pdf';
-    data: string;
-  };
-}
+    if (!res.ok) {
+      const errorBody = await res.text().catch(() => '');
+      throw new Error(errorBody || `Server request failed (${res.status})`);
+    }
 
-interface TextBlock {
-  type: 'text';
-  text: string;
-}
+    if (!res.body) {
+      throw new Error('Streaming response body is missing');
+    }
 
-type MessageContent = string | (ContentBlock | TextBlock)[];
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let latest = '';
 
-interface ApiMessage {
-  role: 'user' | 'assistant';
-  content: MessageContent;
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+
+        const evt = JSON.parse(trimmed) as { type?: string; delta?: string; snapshot?: string; text?: string; error?: string };
+        if (evt.type === 'delta') {
+          const delta = evt.delta || '';
+          latest = evt.snapshot || `${latest}${delta}`;
+          onDelta(latest, delta);
+        } else if (evt.type === 'done') {
+          latest = evt.text || latest;
+        } else if (evt.type === 'error') {
+          throw new Error(evt.error || 'Stream failed');
+        }
+      }
+    }
+
+    return latest;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 export async function callClaude(
   messages: ChatMessage[],
   topic: Topic | null,
   domain: Domain | null,
-  pdf: PdfState,
+  adaptiveBrief?: string,
+  onDelta?: (snapshot: string, delta: string) => void,
 ): Promise<string> {
-  const apiMsgs: ApiMessage[] = messages.map((m, i) => {
-    if (i === 0 && pdf.b64) {
-      return {
-        role: m.role,
-        content: [
-          { type: 'document' as const, source: { type: 'base64' as const, media_type: 'application/pdf' as const, data: pdf.b64 } },
-          { type: 'text' as const, text: m.content },
-        ],
-      };
+  let text = '';
+  try {
+    if (onDelta) {
+      text = await callClaudeServerStream(messages, topic, domain, adaptiveBrief, onDelta);
+    } else {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), CHAT_TIMEOUT_MS);
+      try {
+        const res = await fetch('/api/topic-ai', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ messages, topic, domain, adaptiveBrief }),
+          signal: controller.signal,
+        });
+
+        if (!res.ok) {
+          const errorBody = await res.text().catch(() => '');
+          throw new Error(errorBody || `Server request failed (${res.status})`);
+        }
+
+        const data = (await res.json()) as { ok?: boolean; text?: string; error?: string };
+        if (!data?.ok) {
+          throw new Error(data?.error || 'Topic chat generation failed');
+        }
+        text = data.text || '';
+      } finally {
+        clearTimeout(timeout);
+      }
     }
-    return { role: m.role, content: m.content };
-  });
-
-  const response = await client.messages.create({
-    model: 'claude-sonnet-4-6',
-    max_tokens: 1000,
-    system: buildSystemPrompt(topic, domain, !!pdf.b64),
-    messages: apiMsgs as any,
-  });
-
-  const block = response.content[0];
-  if (block.type === 'text') {
-    return block.text;
+  } catch (error) {
+    if (error instanceof Error && /404|Failed to fetch|NetworkError|aborted|AbortError|timeout/i.test(error.message)) {
+      text = 'AI server endpoint is unavailable. Server-only mode is enabled. Start the API server and try again.';
+    } else {
+      throw error;
+    }
   }
-  return '';
+
+  if (onDelta) onDelta(text, '');
+  return text;
 }

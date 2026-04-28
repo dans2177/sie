@@ -1,5 +1,5 @@
 import { C } from './colors';
-import type { MathFormula } from '../types';
+import type { MathFormula } from '../types/index';
 
 export const MATH: MathFormula[] = [
   {
