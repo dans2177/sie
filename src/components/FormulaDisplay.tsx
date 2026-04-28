@@ -1,15 +1,15 @@
 import { BlockMath } from 'react-katex';
 
 const LATEX_BY_TITLE: Record<string, string> = {
-  'Current Yield': '\\text{Current Yield} = \\frac{\\text{Annual Coupon}}{\\text{Current Market Price}}',
-  'Approximate Yield to Maturity (YTM)': '\\text{YTM} \\approx \\frac{\\text{Annual Interest}+\\frac{(\\text{Par}-\\text{Price})}{\\text{Years}}}{\\frac{(\\text{Par}+\\text{Price})}{2}}',
-  'Net Asset Value (NAV) per Share': '\\text{NAV} = \\frac{\\text{Total Assets}-\\text{Total Liabilities}}{\\text{Shares Outstanding}}',
-  'Options Breakeven at Expiration': '\\text{Call BE}=\\text{Strike}+\\text{Premium}\\quad\\text{Put BE}=\\text{Strike}-\\text{Premium}',
-  'Margin — Regulation T & Account Equity': '\\text{Reg T Initial}=50\\%\\quad\\text{Long Equity}=MV-Debit\\quad\\text{Short Equity}=Credit-MV',
-  'Dividend Yield & P/E Ratio': '\\text{Dividend Yield}=\\frac{Dividend}{Price}\\quad\\text{P/E}=\\frac{Price}{EPS}',
-  'Yield to Maturity (YTM)': '\\text{YTM} \\approx \\frac{\\text{Annual Interest}+\\frac{(\\text{Par}-\\text{Price})}{\\text{Years}}}{\\frac{(\\text{Par}+\\text{Price})}{2}}',
-  'Net Asset Value (NAV)': '\\text{NAV} = \\frac{\\text{Total Assets}-\\text{Total Liabilities}}{\\text{Shares Outstanding}}',
-  'Options Breakeven': '\\text{Call BE}=\\text{Strike}+\\text{Premium}\\quad\\text{Put BE}=\\text{Strike}-\\text{Premium}',
+  'Current Yield': 'CY = AnnualCoupon / MarketPrice',
+  'Approximate Yield to Maturity (YTM)': 'YTM = (AnnualInterest + (Par-Price)/Years) / ((Par+Price)/2)',
+  'Net Asset Value (NAV) per Share': 'NAV = (TotalAssets - TotalLiabilities) / SharesOutstanding',
+  'Options Breakeven at Expiration': 'CallBE = Strike + Premium, PutBE = Strike - Premium',
+  'Margin — Regulation T & Account Equity': 'RegTInitial = 50%, LongEquity = MV - Debit, ShortEquity = Credit - MV',
+  'Dividend Yield & P/E Ratio': 'DividendYield = Dividend/Price, PE = Price/EPS',
+  'Yield to Maturity (YTM)': 'YTM = (AnnualInterest + (Par-Price)/Years) / ((Par+Price)/2)',
+  'Net Asset Value (NAV)': 'NAV = (TotalAssets - TotalLiabilities) / SharesOutstanding',
+  'Options Breakeven': 'CallBE = Strike + Premium, PutBE = Strike - Premium',
 };
 
 export default function FormulaDisplay({ title, fallback, color }: { title: string; fallback: string; color: string }) {
@@ -37,6 +37,7 @@ export default function FormulaDisplay({ title, fallback, color }: { title: stri
 
   return (
     <div
+      className="formula-math-block"
       style={{
         background: `${color}12`,
         borderRadius: '8px',
@@ -46,6 +47,7 @@ export default function FormulaDisplay({ title, fallback, color }: { title: stri
         overflowX: 'auto',
       }}
     >
+      <style>{`.formula-math-block .katex-display{margin:0;text-align:left}.formula-math-block .katex-display>.katex{text-align:left}`}</style>
       <BlockMath math={latex} />
     </div>
   );
