@@ -54,7 +54,7 @@ const PROFILES: Profile[] = [
   { id: 'daniel', label: 'Daniel', pin: (import.meta.env.VITE_PIN_DANIEL ?? import.meta.env.VITE_PIN_DAN ?? '').trim() },
   { id: 'dad', label: 'Dad', pin: '2503' },
   { id: 'mom', label: 'Mom', pin: '2504' },
-  { id: 'nick', label: 'Nick', pin: '1443' },
+  { id: 'nick', label: 'Nick', pin: (import.meta.env.VITE_PIN_NICK ?? '1443').trim() },
 ];
 
 export default function App() {

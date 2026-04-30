@@ -19,7 +19,7 @@ function extractJsonArray(text) {
 
 function buildPrompt({ formulas, focusFormulaIds, weakFormulaIds, existingQuestionIds, batchSize, requireCoverage }) {
   const focusText = focusFormulaIds.length
-    ? `Prioritize these formulas first: ${focusFormulaIds.join(', ')}.`
+    ? `STRICT: Every question MUST use formulaId = "${focusFormulaIds[0]}". Do not use any other formula.`
     : 'Distribute questions across the formulas provided.';
   const weakText = weakFormulaIds.length
     ? `Spend extra weight on weak formulas: ${weakFormulaIds.join(', ')}.`
@@ -78,7 +78,7 @@ export default async function handler(req, res) {
     const reqConfig = {
       model: 'claude-sonnet-4-6',
       max_tokens: 1400,
-      temperature: 0.3,
+      temperature: 0.9,
       system: 'You produce strict JSON for educational math practice content.',
       messages: [
         {

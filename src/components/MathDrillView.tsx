@@ -36,8 +36,9 @@ type FeedbackTurn = {
   cardId: string;
   correct: boolean;
   expected: string;
-  explanation: string;
-  steps: string[];
+  userAnswerDisplay: string;
+  aiText: string;
+  streaming: boolean;
 };
 type UserMsgTurn = { kind: 'user'; text: string };
 type AssistantMsgTurn = { kind: 'assistant'; text: string };
@@ -121,12 +122,34 @@ export default function MathDrillView({ profileId, onLog, onBack, onOpenFormulaS
     setError(null);
     setTurns((prev) => [...prev, { kind: 'loading', label: 'Writing your next problem…' }]);
     try {
-      const askedIds = turns.filter((t): t is QuestionTurn => t.kind === 'question').map((t) => t.card.id);
+      const askedQuestionTurns = turns.filter((t): t is QuestionTurn => t.kind === 'question');
+      const askedIds = askedQuestionTurns.map((t) => t.card.id);
+      const recentFormulaIds = askedQuestionTurns.slice(-3).map((t) => t.card.formulaId);
+
+      // Pick a target formula client-side so the model gets variety it can't ignore.
+      let targetFormulaId: string | null = null;
+      if (focusFormulaId !== 'all') {
+        targetFormulaId = focusFormulaId;
+      } else {
+        const candidates = MATH.filter((f) => !recentFormulaIds.includes(f.id));
+        const pool = candidates.length ? candidates : MATH;
+        // Prefer the formula with the fewest attempts.
+        const ranked = pool
+          .map((f) => {
+            const attempts = cards.filter((c) => c.formulaId === f.id).reduce((s, c) => s + c.attempts, 0);
+            return { id: f.id, attempts };
+          })
+          .sort((a, b) => a.attempts - b.attempts);
+        const minAttempts = ranked[0]?.attempts ?? 0;
+        const tier = ranked.filter((r) => r.attempts === minAttempts);
+        targetFormulaId = tier[Math.floor(Math.random() * tier.length)].id;
+      }
+
       const res = await generateMathDrills({
         formulas: MATH.map((formula) => ({
           id: formula.id, title: formula.title, formula: formula.formula, rule: formula.rule, example: formula.example.q,
         })),
-        focusFormulaIds: focusFormulaId === 'all' ? [] : [focusFormulaId],
+        focusFormulaIds: targetFormulaId ? [targetFormulaId] : [],
         weakFormulaIds: getWeakMathFormulaIds(profileId, 3),
         existingQuestionIds: [...cards.map((card) => card.id), ...askedIds],
         batchSize: 1,
@@ -193,26 +216,92 @@ export default function MathDrillView({ profileId, onLog, onBack, onOpenFormulaS
     setTurns((prev) => prev.map((t) => (t.kind === 'question' && t.card.id === cardId ? { ...t, ...patch } : t)));
   };
 
-  const submitQuestion = (turn: QuestionTurn) => {
+  const submitQuestion = async (turn: QuestionTurn) => {
     if (turn.submitted || busy) return;
     let payload = '';
+    let userDisplay = '';
     if (turn.card.blanks?.length) {
       if (turn.blankAnswers.some((value) => !String(value || '').trim())) return;
-      payload = JSON.stringify(turn.blankAnswers.map((value) => String(value).trim()));
+      const cleaned = turn.blankAnswers.map((value) => String(value).trim());
+      payload = JSON.stringify(cleaned);
+      userDisplay = cleaned.map((v, i) => `${turn.card.blanks?.[i]?.label ?? `#${i + 1}`}: ${v}`).join(' • ');
     } else {
       if (!turn.singleAnswer.trim()) return;
       payload = turn.singleAnswer;
+      userDisplay = turn.singleAnswer.trim();
     }
     const result = reviewMathDrill(profileId, turn.card.id, payload);
     if (!result) { setError('That drill could not be scored.'); return; }
     const next = refresh();
     persistRemote(next);
     updateQuestionTurn(turn.card.id, { submitted: true, correct: result.correct });
-    setTurns((prev) => [...prev, {
-      kind: 'feedback', cardId: turn.card.id, correct: result.correct,
-      expected: turn.card.canonicalAnswer, explanation: turn.card.explanation, steps: turn.card.steps,
-    }]);
+
+    // Push a user bubble + a streaming AI feedback bubble.
+    setTurns((prev) => [
+      ...prev,
+      { kind: 'user', text: userDisplay },
+      {
+        kind: 'feedback',
+        cardId: turn.card.id,
+        correct: result.correct,
+        expected: turn.card.canonicalAnswer,
+        userAnswerDisplay: userDisplay,
+        aiText: '',
+        streaming: true,
+      } as FeedbackTurn,
+    ]);
     onLog('math_drill_chat_answer', { id: turn.card.id, correct: result.correct });
+
+    setBusy(true);
+    try {
+      const seed = result.correct
+        ? `Student got this SIE math drill CORRECT.
+
+Formula: ${turn.card.formulaTitle}
+Problem: ${turn.card.prompt}
+${turn.card.template ? `Template: ${turn.card.template}\n` : ''}Their answer: ${userDisplay}
+Final answer key: ${turn.card.canonicalAnswer}
+
+Reply in 1-2 short sentences: confirm it's right and add a quick reinforcing insight (a tip or memory hook). Do NOT pose a new problem.`
+        : `Student got this SIE math drill WRONG.
+
+Formula: ${turn.card.formulaTitle}
+Problem: ${turn.card.prompt}
+${turn.card.template ? `Template: ${turn.card.template}\n` : ''}Their answer: ${userDisplay}
+Correct final answer: ${turn.card.canonicalAnswer}
+Known explanation: ${turn.card.explanation}
+Steps: ${turn.card.steps.join(' | ')}
+
+Reply briefly (2-4 sentences): identify their likely mistake, teach the correct approach step-by-step, then end by saying "Try it again ↑". Do NOT reveal the final number directly — guide them so they can fix it themselves. Do NOT pose a new problem.`;
+      const conversation = [{ role: 'user' as const, content: seed, ts: new Date().toISOString() }];
+      const reply = await callClaude(conversation, null, null, undefined, (snapshot) => {
+        const clean = snapshot.replace(/^\[OUTCOME:[A-Z_]+\]\s*/i, '');
+        setTurns((prev) => prev.map((t) => (
+          t.kind === 'feedback' && t.cardId === turn.card.id && t.streaming
+            ? { ...t, aiText: clean }
+            : t
+        )));
+      });
+      const cleanFinal = (reply || '').replace(/^\[OUTCOME:[A-Z_]+\]\s*/i, '');
+      setTurns((prev) => prev.map((t) => (
+        t.kind === 'feedback' && t.cardId === turn.card.id && t.streaming
+          ? { ...t, aiText: cleanFinal, streaming: false }
+          : t
+      )));
+      // On wrong: re-enable the question turn so they can retry in place.
+      if (!result.correct) {
+        updateQuestionTurn(turn.card.id, { submitted: false, correct: undefined });
+      }
+    } catch (err) {
+      setTurns((prev) => prev.map((t) => (
+        t.kind === 'feedback' && t.cardId === turn.card.id && t.streaming
+          ? { ...t, aiText: turn.card.explanation, streaming: false }
+          : t
+      )));
+      setError(err instanceof Error ? err.message : 'AI tutor unavailable.');
+    } finally {
+      setBusy(false);
+    }
   };
 
   const sendChatMessage = async () => {
@@ -283,7 +372,10 @@ Reply briefly with the exact step or insight I need. Do NOT pose another practic
   }), [cards]);
 
   const lastTurn = turns[turns.length - 1];
-  const canRequestNext = !busy && (lastTurn?.kind === 'feedback' || lastTurn?.kind === 'assistant');
+  const canRequestNext = !busy && (
+    (lastTurn?.kind === 'feedback' && lastTurn.correct && !lastTurn.streaming)
+    || lastTurn?.kind === 'assistant'
+  );
 
   const tinyBtn: CSSProperties = {
     padding: '4px 10px', borderRadius: '6px',
@@ -357,7 +449,7 @@ Reply briefly with the exact step or insight I need. Do NOT pose another practic
             }));
           },
           onChangeSingle: (cardId, value) => updateQuestionTurn(cardId, { singleAnswer: value }),
-          onSubmit: (q) => submitQuestion(q),
+          onSubmit: (q) => { void submitQuestion(q); },
           onNext: () => askNextQuestion(),
           canRequestNext,
         }))}
@@ -439,25 +531,31 @@ function renderTurn(turn: Turn, idx: number, handlers: RenderHandlers) {
           border: `1px solid ${ok ? '#bbf7d0' : '#fecaca'}`,
           background: ok ? '#f0fdf4' : '#fef2f2',
         }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 700, color: ok ? '#166534' : '#991b1b', marginBottom: '6px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 700, color: ok ? '#166534' : '#991b1b', marginBottom: '8px' }}>
             <span style={{ fontSize: '16px' }}>{ok ? '✓' : '✗'}</span>
-            {ok ? 'Nice — that\'s right.' : 'Not quite.'}
-            <span style={{ marginLeft: 'auto', fontSize: '12px', color: C.dim, fontWeight: 500 }}>
-              Answer: <span style={{ color: C.text, fontWeight: 700 }}>{turn.expected}</span>
-            </span>
+            {ok ? 'Correct!' : 'Not quite — let\'s look at it.'}
+            {ok && (
+              <span style={{ marginLeft: 'auto', fontSize: '12px', color: C.dim, fontWeight: 500 }}>
+                Answer: <span style={{ color: C.text, fontWeight: 700 }}>{turn.expected}</span>
+              </span>
+            )}
           </div>
-          <div style={{ fontSize: '14px', lineHeight: 1.6, color: C.text }}>{turn.explanation}</div>
-          {turn.steps.length > 0 && (
-            <ol style={{ margin: '8px 0 4px', paddingLeft: '20px', color: C.dim, fontSize: '13px', lineHeight: 1.7 }}>
-              {turn.steps.map((step, i) => <li key={i}>{step}</li>)}
-            </ol>
+          <div style={{ fontSize: '14px', lineHeight: 1.7, color: C.text, whiteSpace: 'pre-wrap' }}>
+            {turn.aiText || (turn.streaming ? '…' : '')}
+          </div>
+          {ok && !turn.streaming && (
+            <button onClick={handlers.onNext} disabled={!handlers.canRequestNext} style={{
+              marginTop: '12px', padding: '8px 14px', borderRadius: '8px', border: 'none',
+              background: C.amber, color: '#ffffff', cursor: handlers.canRequestNext ? 'pointer' : 'not-allowed',
+              fontFamily: 'inherit', fontSize: '13px', fontWeight: 600,
+              opacity: handlers.canRequestNext ? 1 : 0.5,
+            }}>Next problem →</button>
           )}
-          <button onClick={handlers.onNext} disabled={!handlers.canRequestNext} style={{
-            marginTop: '10px', padding: '8px 14px', borderRadius: '8px', border: 'none',
-            background: C.amber, color: '#ffffff', cursor: handlers.canRequestNext ? 'pointer' : 'not-allowed',
-            fontFamily: 'inherit', fontSize: '13px', fontWeight: 600,
-            opacity: handlers.canRequestNext ? 1 : 0.5,
-          }}>Next problem →</button>
+          {!ok && !turn.streaming && (
+            <div style={{ marginTop: '10px', fontSize: '12px', color: C.dim, fontStyle: 'italic' }}>
+              The blanks above are unlocked — give it another shot.
+            </div>
+          )}
         </div>
       </div>
     );
@@ -467,7 +565,7 @@ function renderTurn(turn: Turn, idx: number, handlers: RenderHandlers) {
   const accent = formula?.color ?? C.amber;
   return (
     <div key={idx} style={{ display: 'flex', justifyContent: 'flex-start' }}>
-      <div style={{ ...bubble(false), maxWidth: '85%', borderLeft: `3px solid ${accent}`, paddingLeft: '14px' }}>
+      <div style={{ ...bubble(false), maxWidth: '95%', width: '100%', borderLeft: `3px solid ${accent}`, paddingLeft: '14px' }}>
         <div style={{ fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.1em', color: accent, fontWeight: 700, marginBottom: '6px' }}>
           {turn.card.formulaTitle} · {turn.card.difficulty}
         </div>
@@ -500,12 +598,15 @@ function renderTurn(turn: Turn, idx: number, handlers: RenderHandlers) {
                   disabled={turn.submitted}
                   placeholder={turn.card.blanks?.[segment.index]?.label ?? '?'}
                   style={{
-                    minWidth: '70px',
-                    width: `${Math.max(70, (turn.blankAnswers[segment.index]?.length || 4) * 12)}px`,
-                    padding: '4px 8px', border: 'none',
+                    minWidth: `${Math.max(120, ((turn.card.blanks?.[segment.index]?.label?.length ?? 6)) * 10 + 24)}px`,
+                    width: `${Math.max(
+                      Math.max(120, ((turn.card.blanks?.[segment.index]?.label?.length ?? 6)) * 10 + 24),
+                      (turn.blankAnswers[segment.index]?.length || 6) * 12 + 24
+                    )}px`,
+                    padding: '6px 10px', border: 'none',
                     borderBottom: `2px solid ${turn.submitted ? (turn.correct ? '#16a34a' : '#dc2626') : accent}`,
                     background: turn.submitted ? (turn.correct ? '#f0fdf4' : '#fef2f2') : C.card,
-                    color: C.text, fontSize: '17px', fontFamily: 'inherit', fontWeight: 700,
+                    color: C.text, fontSize: '16px', fontFamily: 'inherit', fontWeight: 700,
                     textAlign: 'center', outline: 'none', borderRadius: '4px',
                   }}
                 />
