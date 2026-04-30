@@ -631,7 +631,7 @@ function renderTurn(turn: Turn, idx: number, handlers: RenderHandlers) {
             fontSize: '17px', lineHeight: '2.2', color: C.text,
             display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '4px', fontWeight: 600,
           }}>
-            {renderTemplate(turn.card.template || turn.card.prompt, turn.card.blanks.length).map((segment, segIdx) => (
+            {renderTemplate(turn.card.template || turn.card.prompt, (turn.card.blanks?.length ?? 0)).map((segment, segIdx) => (
               segment.type === 'text' ? (
                 <span key={`t-${segIdx}`} style={{ whiteSpace: 'pre-wrap' }}>{segment.value}</span>
               ) : (
