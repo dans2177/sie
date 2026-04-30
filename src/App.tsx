@@ -35,6 +35,7 @@ import WalkthroughContent from './components/WalkthroughContent';
 import { clearObjectives, reviewObjective } from './lib/spacedRepetition';
 
 const ChatView = lazy(() => import('./components/ChatView'));
+const MathDrillView = lazy(() => import('./components/MathDrillView'));
 const MathSheet = lazy(() => import('./components/MathSheet'));
 const CheatSheet = lazy(() => import('./components/CheatSheet'));
 const DailyTestView = lazy(() => import('./components/DailyTestView'));
@@ -53,6 +54,7 @@ const PROFILES: Profile[] = [
   { id: 'daniel', label: 'Daniel', pin: (import.meta.env.VITE_PIN_DANIEL ?? import.meta.env.VITE_PIN_DAN ?? '').trim() },
   { id: 'dad', label: 'Dad', pin: '2503' },
   { id: 'mom', label: 'Mom', pin: '2504' },
+  { id: 'nick', label: 'Nick', pin: '1443' },
 ];
 
 export default function App() {
@@ -498,7 +500,25 @@ export default function App() {
               onResetAll={resetAllMastery}
               onRestartSectionQuestions={restartSectionQuestions}
               onRestartAllQuestions={restartAllQuestions}
+              onOpenMathDrills={() => setView('math-drills')}
               onLog={log}
+            />
+          </Suspense>
+        )}
+        {view === 'math-drills' && (
+          <Suspense fallback={viewFallback}>
+            <MathDrillView
+              profileId={activeProfile}
+              onLog={log}
+              onBack={() => setView('overview')}
+              onOpenFormulaSheet={() => {
+                setModal('math');
+                log('modal_opened', { modal: 'math', source: 'math_drills' });
+              }}
+              onOpenCheatSheet={() => {
+                setModal('cheatsheet');
+                log('modal_opened', { modal: 'cheatsheet', source: 'math_drills' });
+              }}
             />
           </Suspense>
         )}
@@ -541,6 +561,13 @@ export default function App() {
                 if (next === 'math' || next === 'cheatsheet') {
                   setModal(next);
                   log('modal_opened', { modal: next, source: 'sidebar_menu' });
+                  return;
+                }
+
+                if (next === 'math-drills') {
+                  setModal(null);
+                  setView(next);
+                  log('view_changed', { view: next });
                   return;
                 }
 
@@ -610,6 +637,27 @@ export default function App() {
                 >
                   {`Pick one topic on the left\nChat will coach you step-by-step\nProgress unlocks the next topic`}
                 </div>
+                <button
+                  onClick={() => {
+                    setModal(null);
+                    setView('math-drills');
+                    log('view_changed', { view: 'math-drills', source: 'topics_empty_state' });
+                  }}
+                  style={{
+                    marginTop: '8px',
+                    padding: '10px 16px',
+                    borderRadius: '10px',
+                    border: `1px solid ${C.amber}`,
+                    background: C.amber,
+                    color: '#ffffff',
+                    cursor: 'pointer',
+                    fontFamily: 'inherit',
+                    fontSize: '13px',
+                    letterSpacing: '0.04em',
+                  }}
+                >
+                  ✏️ Open Math XL Drills
+                </button>
               </div>
               ) : (
                 <Suspense fallback={viewFallback}>

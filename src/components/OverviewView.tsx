@@ -12,6 +12,7 @@ import {
 } from 'recharts';
 import { C } from '../data/colors';
 import { CURRICULUM, TOTAL } from '../data/curriculum';
+import { getMathDrillSummary } from '../lib/mathDrills';
 import { loadDailyTest } from '../lib/server';
 
 type Props = {
@@ -24,6 +25,7 @@ type Props = {
   onResetAll: () => Promise<void>;
   onRestartSectionQuestions: (sectionId: string) => Promise<void>;
   onRestartAllQuestions: () => Promise<void>;
+  onOpenMathDrills: () => void;
   onLog: (eventType: string, payload?: Record<string, unknown>) => void;
 };
 
@@ -37,12 +39,14 @@ export default function OverviewView({
   onResetAll,
   onRestartSectionQuestions,
   onRestartAllQuestions,
+  onOpenMathDrills,
   onLog,
 }: Props) {
   const [history, setHistory] = useState<Array<{ date: string; score: number; total: number; completedAt: string }>>([]);
   const [loading, setLoading] = useState(true);
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [familyStats, setFamilyStats] = useState<Array<{ id: string; label: string; avgPct: number; bestPct: number; attempts: number }>>([]);
+  const [mathSummary, setMathSummary] = useState(() => getMathDrillSummary(profileId));
 
   useEffect(() => {
     let cancelled = false;
@@ -52,6 +56,7 @@ export default function OverviewView({
       const data = await loadDailyTest(profileId, today);
       if (cancelled) return;
       setHistory(data.history || []);
+      setMathSummary(getMathDrillSummary(profileId));
       setLoading(false);
     };
     load();
@@ -210,6 +215,46 @@ export default function OverviewView({
   return (
     <div style={{ flex: 1, overflowY: 'auto', padding: '20px', background: C.bg }}>
       <div style={{ maxWidth: '1160px', margin: '0 auto', display: 'grid', gap: '14px' }}>
+        <div style={{ ...cardStyle, display: 'grid', gap: '12px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
+            <div>
+              <div style={{ fontSize: '18px', color: C.text, fontWeight: 'bold' }}>Math XL Repetition</div>
+              <div style={{ marginTop: '4px', color: C.dim, fontSize: '14px' }}>
+                AI-generated fill-in-the-blank SIE math drills with spaced repetition scheduling.
+              </div>
+            </div>
+            <button
+              onClick={() => {
+                onLog('overview_open_math_drills_clicked', {});
+                onOpenMathDrills();
+              }}
+              style={{
+                padding: '9px 12px',
+                borderRadius: '8px',
+                border: `1px solid ${C.amber}`,
+                background: C.amber,
+                color: '#ffffff',
+                cursor: 'pointer',
+                fontFamily: 'inherit',
+              }}
+            >
+              Open Math XL
+            </button>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '10px' }}>
+            {[
+              { label: 'Tracked', value: mathSummary.tracked },
+              { label: 'Due Now', value: mathSummary.dueNow },
+              { label: 'Mastered', value: mathSummary.mastered },
+              { label: 'Accuracy', value: `${mathSummary.accuracyPct}%` },
+            ].map((item) => (
+              <div key={item.label} style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: '10px', padding: '12px' }}>
+                <div style={{ fontSize: '11px', color: C.dim, textTransform: 'uppercase', letterSpacing: '0.08em' }}>{item.label}</div>
+                <div style={{ marginTop: '4px', fontSize: '24px', fontWeight: 700, color: C.text }}>{item.value}</div>
+              </div>
+            ))}
+          </div>
+        </div>
         <div style={cardStyle}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
             <div>

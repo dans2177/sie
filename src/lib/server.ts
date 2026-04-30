@@ -1,7 +1,7 @@
 import { buildDailyQuestions, normalizeQuestionSet } from './dailyTest';
 import { CURRICULUM } from '../data/curriculum';
 import { MATH } from '../data/math';
-import type { ChatMessage, DailyQuestion, DailyTestRecord, GenerationProgress, MemorySummary } from '../types/index';
+import type { ChatMessage, DailyQuestion, DailyTestRecord, GenerationProgress, MathDrillCard, MemorySummary } from '../types/index';
 
 const LOCAL_DAILY_KEY = 'sie-v5-daily';
 const LOCAL_LAST_TOPIC_KEY = 'sie-v5-last-topic';
@@ -191,6 +191,24 @@ export async function saveLastTopic(profileId: string, lastTopicId: string | nul
   if (!res?.ok) {
     localSetLastTopic(profileId, lastTopicId);
   }
+}
+
+export async function loadMathDrillsRemote(profileId: string): Promise<MathDrillCard[] | null> {
+  const data = await safeJson<{ ok: boolean; cards: MathDrillCard[] }>(
+    `/api/math-drills-state?profileId=${encodeURIComponent(profileId)}`
+  );
+  if (data?.ok && Array.isArray(data.cards)) {
+    return data.cards;
+  }
+  return null;
+}
+
+export async function saveMathDrillsRemote(profileId: string, cards: MathDrillCard[]): Promise<void> {
+  await safeJson('/api/math-drills-state', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ profileId, cards }),
+  });
 }
 
 export async function loadDailyTest(profileId: string, date: string): Promise<{

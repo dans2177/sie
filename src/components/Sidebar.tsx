@@ -179,7 +179,8 @@ export default function Sidebar({
               <IconBtn icon="📝" label="Mock" active={view === 'mock'} onClick={() => onViewChange('mock')} />
             </div>
             <div style={{ display: 'flex', gap: '7px', flexWrap: 'wrap' }}>
-              <IconBtn icon="📐" label="Math" active={false} onClick={() => onViewChange('math')} />
+              <IconBtn icon="✏️" label="Math XL" active={view === 'math-drills'} onClick={() => onViewChange('math-drills')} />
+              <IconBtn icon="📐" label="Formulas" active={false} onClick={() => onViewChange('math')} />
               <IconBtn icon="📌" label="Cheat" active={false} onClick={() => onViewChange('cheatsheet')} />
               <IconBtn icon="🚀" label="Tour" active={false} onClick={onOpenTour} />
               <IconBtn icon="👤" label={`${profileLabel}`} active={false} onClick={onSwitchProfile} />

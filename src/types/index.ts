@@ -5,6 +5,8 @@ export * from './dailyQuestion';
 export * from './dailyTestRecord';
 export * from './domain';
 export * from './generationProgress';
+export * from './mathDrillCard';
+export * from './mathDrillQuestion';
 export * from './mathFormula';
 export * from './memorySummary';
 export * from './mockDomainBreakdown';

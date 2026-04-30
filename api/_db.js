@@ -89,6 +89,14 @@ export async function ensureTables() {
         updated_at timestamptz not null default now()
       )
     `;
+
+    await tx`
+      create table if not exists math_drills (
+        profile_id text primary key,
+        cards jsonb not null default '[]'::jsonb,
+        updated_at timestamptz not null default now()
+      )
+    `;
   });
 
   initialized = true;

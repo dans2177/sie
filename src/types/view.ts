@@ -1,1 +1,1 @@
-export type View = 'overview' | 'topics' | 'chat' | 'math' | 'cheatsheet' | 'daily' | 'mock';
+export type View = 'overview' | 'topics' | 'chat' | 'math' | 'math-drills' | 'cheatsheet' | 'daily' | 'mock';
