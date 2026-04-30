@@ -13,6 +13,7 @@ import {
   upsertMathDrillQuestions,
 } from '../lib/mathDrills';
 import { loadMathDrillsRemote, saveMathDrillsRemote } from '../lib/server';
+import { renderChatContent } from '../lib/chatHelpers';
 import type { MathDrillCard, MathDrillSummary } from '../types/index';
 
 type Props = {
@@ -23,9 +24,13 @@ type Props = {
   onOpenCheatSheet: () => void;
 };
 
+type QuestionMode = 'guided' | 'final' | 'word';
+
 type QuestionTurn = {
   kind: 'question';
   card: MathDrillCard;
+  mode: QuestionMode;
+  level: 1 | 2 | 3;
   blankAnswers: string[];
   singleAnswer: string;
   submitted: boolean;
@@ -46,6 +51,25 @@ type LoadingTurn = { kind: 'loading'; label: string };
 type Turn = QuestionTurn | FeedbackTurn | UserMsgTurn | AssistantMsgTurn | LoadingTurn;
 
 const CHAT_STORE_KEY = 'sie-v5-math-drill-chats';
+
+// Per-formula mastery levels:
+//   1 (guided)  — show full template with blanks
+//   2 (final)   — show formula reference, ask for final answer only
+//   3 (word)    — pure word problem, no formula shown
+function getFormulaLevel(cards: MathDrillCard[], formulaId: string): 1 | 2 | 3 {
+  const totalCorrect = cards
+    .filter((c) => c.formulaId === formulaId)
+    .reduce((s, c) => s + (c.correctCount || 0), 0);
+  if (totalCorrect >= 6) return 3;
+  if (totalCorrect >= 3) return 2;
+  return 1;
+}
+
+function levelToMode(level: 1 | 2 | 3): QuestionMode {
+  if (level === 3) return 'word';
+  if (level === 2) return 'final';
+  return 'guided';
+}
 
 function loadChat(profileId: string): Turn[] {
   try {
@@ -76,7 +100,7 @@ function saveChat(profileId: string, turns: Turn[]) {
 export default function MathDrillView({ profileId, onLog, onBack, onOpenFormulaSheet, onOpenCheatSheet }: Props) {
   const [cards, setCards] = useState<MathDrillCard[]>([]);
   const [summary, setSummary] = useState<MathDrillSummary>({ tracked: 0, dueNow: 0, mastered: 0, attempts: 0, accuracyPct: 0 });
-  const [turns, setTurns] = useState<Turn[]>([]);
+  const [turns, setTurns] = useState<Turn[]>(() => loadChat(profileId));
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -84,7 +108,6 @@ export default function MathDrillView({ profileId, onLog, onBack, onOpenFormulaS
   const [calcOpen, setCalcOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const initRan = useRef(false);
-  const restoredRef = useRef(false);
 
   const refresh = (): MathDrillCard[] => {
     const next = loadMathDrillCards(profileId);
@@ -94,11 +117,8 @@ export default function MathDrillView({ profileId, onLog, onBack, onOpenFormulaS
   };
 
   useEffect(() => {
-    restoredRef.current = false;
     refresh();
     setTurns(loadChat(profileId));
-    // Mark restored on the next tick so the save effect can no-op for the initial empty-state render.
-    queueMicrotask(() => { restoredRef.current = true; });
     void (async () => {
       const remote = await loadMathDrillsRemote(profileId);
       if (remote && remote.length) {
@@ -108,9 +128,20 @@ export default function MathDrillView({ profileId, onLog, onBack, onOpenFormulaS
     })();
   }, [profileId]);
 
+  // Snapshot a "shape" of turns so we only auto-scroll when content grows
+  // (new turn or streaming text), not on every blank keystroke.
+  const turnsShape = useMemo(() => turns.map((t) => {
+    if (t.kind === 'assistant' || t.kind === 'user') return `${t.kind}:${t.text.length}`;
+    if (t.kind === 'feedback') return `f:${t.aiText.length}:${t.streaming ? 1 : 0}`;
+    if (t.kind === 'loading') return `l:${t.label.length}`;
+    return `q:${t.card.id}:${t.submitted ? 1 : 0}`;
+  }).join('|'), [turns]);
+
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    if (!restoredRef.current) return;
+  }, [turnsShape]);
+
+  useEffect(() => {
     saveChat(profileId, turns);
   }, [turns, profileId]);
 
@@ -176,17 +207,21 @@ export default function MathDrillView({ profileId, onLog, onBack, onOpenFormulaS
       persistRemote(next);
       const card = next.find((c) => c.id === res[0].id);
       if (!card) throw new Error('Saved card not found.');
+      const level = getFormulaLevel(next, card.formulaId);
+      const mode = levelToMode(level);
       setTurns((prev) => {
         const trimmed = prev.filter((t) => t.kind !== 'loading');
         return [...trimmed, {
           kind: 'question',
           card,
+          mode,
+          level,
           blankAnswers: card.blanks?.length ? Array(card.blanks.length).fill('') : [],
           singleAnswer: '',
           submitted: false,
         }];
       });
-      onLog('math_drill_chat_question', { id: card.id, formulaId: card.formulaId });
+      onLog('math_drill_chat_question', { id: card.id, formulaId: card.formulaId, level });
     } catch (err) {
       setTurns((prev) => prev.filter((t) => t.kind !== 'loading'));
       setError(err instanceof Error ? err.message : 'Could not load a question.');
@@ -220,7 +255,7 @@ export default function MathDrillView({ profileId, onLog, onBack, onOpenFormulaS
     if (turn.submitted || busy) return;
     let payload = '';
     let userDisplay = '';
-    if (turn.card.blanks?.length) {
+    if (turn.mode === 'guided' && turn.card.blanks?.length) {
       if (turn.blankAnswers.some((value) => !String(value || '').trim())) return;
       const cleaned = turn.blankAnswers.map((value) => String(value).trim());
       payload = JSON.stringify(cleaned);
@@ -511,7 +546,9 @@ function renderTurn(turn: Turn, idx: number, handlers: RenderHandlers) {
   if (turn.kind === 'assistant') {
     return (
       <div key={idx} style={{ display: 'flex', justifyContent: 'flex-start' }}>
-        <div style={bubble(false)}>{turn.text || '…'}</div>
+        <div style={{ ...bubble(false), whiteSpace: 'normal' }}>
+          {turn.text ? renderChatContent(turn.text) : '…'}
+        </div>
       </div>
     );
   }
@@ -540,8 +577,8 @@ function renderTurn(turn: Turn, idx: number, handlers: RenderHandlers) {
               </span>
             )}
           </div>
-          <div style={{ fontSize: '14px', lineHeight: 1.7, color: C.text, whiteSpace: 'pre-wrap' }}>
-            {turn.aiText || (turn.streaming ? '…' : '')}
+          <div style={{ fontSize: '14px', lineHeight: 1.7, color: C.text, whiteSpace: 'normal' }}>
+            {turn.aiText ? renderChatContent(turn.aiText) : (turn.streaming ? '…' : '')}
           </div>
           {ok && !turn.streaming && (
             <button onClick={handlers.onNext} disabled={!handlers.canRequestNext} style={{
@@ -563,17 +600,31 @@ function renderTurn(turn: Turn, idx: number, handlers: RenderHandlers) {
   // question turn
   const formula = MATH.find((f) => f.id === turn.card.formulaId);
   const accent = formula?.color ?? C.amber;
+  const levelLabel = turn.level === 3 ? 'L3 · Word problem' : turn.level === 2 ? 'L2 · Final answer' : 'L1 · Guided';
+  const showBlanks = turn.mode === 'guided' && (turn.card.blanks?.length ?? 0) > 0;
+  const showFormulaRef = turn.mode === 'final' && Boolean(turn.card.template);
   return (
     <div key={idx} style={{ display: 'flex', justifyContent: 'flex-start' }}>
       <div style={{ ...bubble(false), maxWidth: '95%', width: '100%', borderLeft: `3px solid ${accent}`, paddingLeft: '14px' }}>
-        <div style={{ fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.1em', color: accent, fontWeight: 700, marginBottom: '6px' }}>
-          {turn.card.formulaTitle} · {turn.card.difficulty}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', marginBottom: '6px' }}>
+          <div style={{ fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.1em', color: accent, fontWeight: 700 }}>
+            {turn.card.formulaTitle} · {turn.card.difficulty}
+          </div>
+          <div style={{ fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.08em', color: C.dim, fontWeight: 700, padding: '3px 8px', borderRadius: '999px', background: C.panel, border: `1px solid ${C.border}` }}>
+            {levelLabel}
+          </div>
         </div>
         <div style={{ fontSize: '15px', color: C.text, lineHeight: 1.6, marginBottom: '12px', whiteSpace: 'pre-wrap' }}>
           {turn.card.prompt}
         </div>
 
-        {turn.card.blanks?.length ? (
+        {showFormulaRef && (
+          <div style={{ marginBottom: '10px', padding: '8px 12px', borderRadius: '8px', background: C.panel, border: `1px dashed ${C.border}`, color: C.dim, fontSize: '12px', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', whiteSpace: 'pre-wrap' }}>
+            {turn.card.template}
+          </div>
+        )}
+
+        {showBlanks ? (
           <div style={{
             padding: '12px 14px', borderRadius: '8px',
             background: C.panel, border: `1px solid ${C.border}`,
