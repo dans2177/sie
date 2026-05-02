@@ -98,7 +98,7 @@ export default function ChatView({
             padding: '10px',
           }}
         >
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '8px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100px, 100%), 1fr))', gap: '8px' }}>
             <div style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: '8px', padding: '8px', textAlign: 'center' }}>
               <div style={{ fontSize: '11px', color: C.dim }}>Correct</div>
               <div style={{ fontSize: '18px', fontWeight: 700, color: C.d3 }}>{answerSummary.correct}</div>
@@ -202,7 +202,7 @@ export default function ChatView({
                 )}
                 <div
                   style={{
-                    maxWidth: '78%',
+                    maxWidth: '92%',
                     padding: '10px 14px',
                     borderRadius: msg.role === 'user' ? '12px 12px 2px 12px' : '12px 12px 12px 2px',
                     background: msg.role === 'user' ? C.amberBg : C.card,

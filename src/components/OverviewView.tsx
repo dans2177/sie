@@ -213,7 +213,7 @@ export default function OverviewView({
   };
 
   return (
-    <div style={{ flex: 1, overflowY: 'auto', padding: '20px', background: C.bg }}>
+    <div style={{ flex: 1, overflowY: 'auto', padding: 'clamp(12px, 4vw, 20px)', background: C.bg }}>
       <div style={{ maxWidth: '1160px', margin: '0 auto', display: 'grid', gap: '14px' }}>
         <div style={{ ...cardStyle, display: 'grid', gap: '12px' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
@@ -241,7 +241,7 @@ export default function OverviewView({
               Open Math XL
             </button>
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '10px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(140px, 100%), 1fr))', gap: '10px' }}>
             {[
               { label: 'Tracked', value: mathSummary.tracked },
               { label: 'Due Now', value: mathSummary.dueNow },
@@ -309,7 +309,7 @@ export default function OverviewView({
           </div>
         </div>
 
-        <div style={{ display: 'grid', gap: '12px', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
+        <div style={{ display: 'grid', gap: '12px', gridTemplateColumns: 'repeat(auto-fit, minmax(min(220px, 100%), 1fr))' }}>
           <div style={cardStyle}>
             <div style={{ color: C.dim, fontSize: '12px' }}>Overall Progress</div>
             <div style={{ color: C.text, fontSize: '28px', fontWeight: 'bold', marginTop: '4px' }}>{overallPct}%</div>
@@ -381,7 +381,7 @@ export default function OverviewView({
           )}
         </div>
 
-        <div style={{ display: 'grid', gap: '12px', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))' }}>
+        <div style={{ display: 'grid', gap: '12px', gridTemplateColumns: 'repeat(auto-fit, minmax(min(280px, 100%), 1fr))' }}>
           <div style={cardStyle}>
             <div style={{ color: C.text, fontSize: '16px', fontWeight: 'bold', marginBottom: '8px' }}>Daily Tests Over Time</div>
             {loading ? (

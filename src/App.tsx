@@ -31,6 +31,7 @@ import AccessGate from './components/AccessGate';
 import AppHeader from './components/AppHeader';
 import OverlayModal from './components/OverlayModal';
 import Sidebar from './components/Sidebar';
+import { useIsMobile } from './lib/useIsMobile';
 import WalkthroughContent from './components/WalkthroughContent';
 import { clearObjectives, reviewObjective } from './lib/spacedRepetition';
 
@@ -72,7 +73,11 @@ export default function App() {
   const [ready, setReady] = useState(false);
   const [exp, setExp] = useState<Record<string, boolean>>({ d1: true, d2: false, d3: false, d4: false });
   const [view, setView] = useState<View>('overview');
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const isMobile = useIsMobile();
+  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => (typeof window !== 'undefined' && window.matchMedia('(max-width: 768px)').matches));
+  useEffect(() => {
+    setSidebarCollapsed((prev) => (isMobile ? true : prev));
+  }, [isMobile]);
   const [speakIdx, setSpeakIdx] = useState<number | string | null>(null);
   const [spRate, setSpRate] = useState(1.0);
   const [voiceName, setVoiceName] = useState<string | null>(null);
@@ -475,17 +480,20 @@ export default function App() {
       style={{
         display: 'flex',
         flexDirection: 'column',
-        height: '100vh',
+        height: '100dvh',
+        minHeight: '100vh',
         fontFamily: "'Poppins','Segoe UI',sans-serif",
         background: C.bg,
         color: C.text,
         fontSize: '16px',
       }}
     >
-      <style>{`@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.3}}*{box-sizing:border-box}::-webkit-scrollbar{width:4px}::-webkit-scrollbar-track{background:${C.bg}}::-webkit-scrollbar-thumb{background:${C.border};border-radius:2px}`}</style>
+      <style>{`@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.3}}*{box-sizing:border-box}::-webkit-scrollbar{width:4px}::-webkit-scrollbar-track{background:${C.bg}}::-webkit-scrollbar-thumb{background:${C.border};border-radius:2px}html,body{overscroll-behavior-y:contain}`}</style>
       <AppHeader
         pct={pct}
         profileLabel={profileLabel}
+        showMenuButton={isMobile && isTopicView}
+        onMenuClick={() => setSidebarCollapsed((v) => !v)}
       />
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
         {view === 'overview' && (
@@ -556,6 +564,7 @@ export default function App() {
               onToggleExp={(id) => setExp((p) => ({ ...p, [id]: !p[id] }))}
               collapsed={sidebarCollapsed}
               onToggleCollapsed={() => setSidebarCollapsed((v) => !v)}
+              isMobile={isMobile}
               view={view}
               onViewChange={(next) => {
                 if (next === 'math' || next === 'cheatsheet') {

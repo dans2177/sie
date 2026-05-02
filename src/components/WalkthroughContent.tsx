@@ -113,7 +113,7 @@ export default function WalkthroughContent({
   const percent = Math.round(((step + 1) / STEPS.length) * 100);
 
   return (
-    <div style={{ padding: '22px', background: C.bg, minHeight: '440px' }}>
+    <div style={{ padding: 'clamp(14px, 4vw, 22px)', background: C.bg, minHeight: '440px' }}>
       <div
         style={{
           background: `linear-gradient(145deg, ${C.amberBg} 0%, ${C.card} 60%)`,
@@ -144,7 +144,7 @@ export default function WalkthroughContent({
       <div
         style={{
           display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(min(260px, 100%), 1fr))',
           gap: '16px',
           alignItems: 'stretch',
         }}

@@ -23,7 +23,7 @@ export default function CheatSheet({ embedded = false }: { embedded?: boolean })
         flex: 1,
         overflowY: 'auto',
         background: embedded ? C.card : C.bg,
-        padding: '20px',
+        padding: 'clamp(12px, 4vw, 20px)',
       }}
     >
       <div style={{ maxWidth: '1460px', margin: '0 auto' }}>
@@ -49,7 +49,6 @@ export default function CheatSheet({ embedded = false }: { embedded?: boolean })
             style={{
               marginTop: '14px',
               width: '100%',
-              maxWidth: '560px',
               background: C.card,
               border: `1px solid ${C.border}`,
               borderRadius: '8px',
@@ -78,7 +77,7 @@ export default function CheatSheet({ embedded = false }: { embedded?: boolean })
             <div
               style={{
                 display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(min(280px, 100%), 1fr))',
                 gap: '16px',
               }}
             >

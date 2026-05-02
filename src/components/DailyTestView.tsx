@@ -254,7 +254,7 @@ export default function DailyTestView({ profileId, memory, onSaved, onLog, onOut
   if (loading) {
     const pct = generationProgress ? Math.round((generationProgress.completed / Math.max(generationProgress.total, 1)) * 100) : 0;
     return (
-      <div style={{ flex: 1, display: 'grid', placeItems: 'center', padding: '20px', background: C.bg }}>
+      <div style={{ flex: 1, display: 'grid', placeItems: 'center', padding: 'clamp(12px, 4vw, 20px)', background: C.bg }}>
         <motion.div
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
@@ -282,7 +282,7 @@ export default function DailyTestView({ profileId, memory, onSaved, onLog, onOut
   }
 
   return (
-    <div style={{ flex: 1, overflowY: 'auto', padding: '20px', background: C.bg }}>
+    <div style={{ flex: 1, overflowY: 'auto', padding: 'clamp(12px, 4vw, 20px)', background: C.bg }}>
       <div style={{ maxWidth: '980px', margin: '0 auto' }}>
         <div style={{ marginBottom: '16px', background: C.card, border: `1px solid ${C.border}`, borderRadius: '10px', padding: '14px 16px' }}>
           <div style={{ fontSize: '20px', color: C.text, fontWeight: 'bold' }}>Daily Test - 20 Questions</div>

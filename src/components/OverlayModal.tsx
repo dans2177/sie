@@ -20,14 +20,14 @@ export default function OverlayModal({
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        padding: '20px',
+        padding: 'clamp(8px, 3vw, 20px)',
       }}
     >
       <div
         onClick={(e) => e.stopPropagation()}
         style={{
-          width: 'min(1700px, 98vw)',
-          maxHeight: '90vh',
+          width: 'min(1700px, 100%)',
+          maxHeight: 'min(92vh, 92dvh)',
           background: C.card,
           border: `1px solid ${C.border}`,
           borderRadius: '12px',

@@ -13,11 +13,11 @@ export default function MathSheet({
 }) {
   const sheetMaxWidth = embedded ? '1500px' : '820px';
   const cardGrid = embedded
-    ? 'repeat(auto-fit, minmax(min(420px, 100%), 1fr))'
-    : 'repeat(auto-fit, minmax(min(360px, 100%), 1fr))';
+    ? 'repeat(auto-fit, minmax(min(300px, 100%), 1fr))'
+    : 'repeat(auto-fit, minmax(min(280px, 100%), 1fr))';
 
   return (
-    <div style={{ flex: 1, overflowY: 'auto', padding: '20px', background: embedded ? C.card : C.bg }}>
+    <div style={{ flex: 1, overflowY: 'auto', padding: 'clamp(12px, 4vw, 20px)', background: embedded ? C.card : C.bg }}>
       <div style={{ maxWidth: sheetMaxWidth, margin: '0 auto' }}>
         <div style={{ marginBottom: '24px' }}>
           <div

@@ -432,7 +432,7 @@ Reply briefly with the exact step or insight I need. Do NOT pose another practic
         </div>
 
         <div style={{ marginTop: '8px', background: C.card, border: `1px solid ${C.border}`, borderRadius: '8px', padding: '10px' }}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '8px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100px, 100%), 1fr))', gap: '8px' }}>
             <div style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: '8px', padding: '8px', textAlign: 'center' }}>
               <div style={{ fontSize: '11px', color: C.dim }}>Attempts</div>
               <div style={{ fontSize: '18px', fontWeight: 700, color: C.text }}>{summary.attempts}</div>
@@ -825,7 +825,7 @@ function CalculatorPanel({ onClose }: { onClose: () => void }) {
   return (
     <div style={{
       position: 'fixed', bottom: pos.y, right: pos.x, zIndex: 1000,
-      width: '280px', background: C.card, border: `1px solid ${C.border}`,
+      width: 'min(280px, 92vw)', background: C.card, border: `1px solid ${C.border}`,
       borderRadius: '12px', boxShadow: '0 12px 32px rgba(0,0,0,0.18)',
       fontFamily: 'inherit', overflow: 'hidden',
     }}>

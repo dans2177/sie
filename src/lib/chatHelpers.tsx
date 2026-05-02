@@ -47,7 +47,7 @@ function renderCodeBlock(code: string, language: string, key: string) {
           Table
         </div>
         <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '420px' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 'min(100%, 320px)' }}>
             <thead>
               <tr>
                 {headers.map((header, idx) => (
@@ -172,7 +172,7 @@ export function renderChatContent(content: string) {
       out.push(
         <div key={`tbl-${i}`} style={{ margin: '8px 0', background: C.panel, border: `1px solid ${C.border}`, borderRadius: '10px', padding: '10px' }}>
           <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '360px' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 'min(100%, 280px)' }}>
               <thead>
                 <tr>
                   {header.map((cell, idx) => (

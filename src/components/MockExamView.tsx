@@ -158,7 +158,7 @@ export default function MockExamView({ profileId, memory, onLog, onOutcome }: Pr
   const seconds = String(timeLeftSec % 60).padStart(2, '0');
 
   return (
-    <div style={{ flex: 1, overflowY: 'auto', padding: '20px', background: C.bg }}>
+    <div style={{ flex: 1, overflowY: 'auto', padding: 'clamp(12px, 4vw, 20px)', background: C.bg }}>
       <div style={{ maxWidth: '1160px', margin: '0 auto', display: 'grid', gap: '14px' }}>
         <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: '10px', padding: '14px 16px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', flexWrap: 'wrap' }}>
@@ -368,7 +368,7 @@ export default function MockExamView({ profileId, memory, onLog, onOutcome }: Pr
               style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: '10px', padding: '12px' }}
             >
               <div style={{ color: C.text, fontWeight: 700, fontSize: '14px' }}>Navigator</div>
-              <div style={{ marginTop: '8px', display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '6px' }}>
+              <div style={{ marginTop: '8px', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(44px, 1fr))', gap: '6px' }}>
                 {questions.map((_, i) => {
                   const isAnswered = answers[i] >= 0;
                   return (

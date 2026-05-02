@@ -19,6 +19,7 @@ export default function Sidebar({
   profileLabel,
   onSwitchProfile,
   onOpenTour,
+  isMobile = false,
 }: {
   profileId: string;
   done: Set<string>;
@@ -33,6 +34,7 @@ export default function Sidebar({
   profileLabel: string;
   onSwitchProfile: () => void;
   onOpenTour: () => void;
+  isMobile?: boolean;
 }) {
   const masteredByTopic = useMemo(() => {
     const map: Record<string, boolean> = {};
@@ -99,13 +101,14 @@ export default function Sidebar({
         display: 'inline-flex',
         alignItems: 'center',
         gap: '6px',
-        padding: '5px 8px',
+        padding: '8px 10px',
+        minHeight: '36px',
         borderRadius: '7px',
         border: `1px solid ${active ? C.amber : C.border}`,
         background: active ? C.amberBg : C.card,
         color: active ? C.amber : C.dim,
         cursor: 'pointer',
-        fontSize: '11px',
+        fontSize: '12px',
         letterSpacing: '0.03em',
         fontFamily: 'inherit',
       }}
@@ -115,15 +118,19 @@ export default function Sidebar({
     </button>
   );
 
-  return (
+  // On mobile, collapsed = hidden completely (header hamburger toggles).
+  if (isMobile && collapsed) return null;
+
+  const sidebarContent = (
     <div
       style={{
-        width: collapsed ? '86px' : '320px',
+        width: isMobile ? 'min(320px, 88vw)' : collapsed ? '86px' : '320px',
+        height: isMobile ? '100%' : 'auto',
         borderRight: `1px solid ${C.border}`,
         overflowY: 'auto',
         flexShrink: 0,
         background: C.panel,
-        transition: 'width 0.2s ease',
+        transition: isMobile ? 'none' : 'width 0.2s ease',
       }}
     >
       <div
@@ -351,4 +358,25 @@ export default function Sidebar({
       )}
     </div>
   );
+
+  if (isMobile) {
+    return (
+      <div
+        onClick={onToggleCollapsed}
+        style={{
+          position: 'fixed',
+          inset: 0,
+          background: 'rgba(0,0,0,0.4)',
+          zIndex: 80,
+          display: 'flex',
+        }}
+      >
+        <div onClick={(e) => e.stopPropagation()} style={{ height: '100%', display: 'flex' }}>
+          {sidebarContent}
+        </div>
+      </div>
+    );
+  }
+
+  return sidebarContent;
 }
