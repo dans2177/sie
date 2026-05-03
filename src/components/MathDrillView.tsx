@@ -45,6 +45,8 @@ type FeedbackTurn = {
   userAnswerDisplay: string;
   aiText: string;
   streaming: boolean;
+  reps: number;
+  mastered: boolean;
 };
 type UserMsgTurn = { kind: 'user'; text: string };
 type AssistantMsgTurn = { kind: 'assistant'; text: string };
@@ -296,6 +298,8 @@ export default function MathDrillView({ profileId, onLog, onBack, onOpenFormulaS
         userAnswerDisplay: userDisplay,
         aiText: '',
         streaming: true,
+        reps: result.card.reps,
+        mastered: result.card.reps >= 2,
       } as FeedbackTurn,
     ]);
     onLog('math_drill_chat_answer', { id: turn.card.id, correct: result.correct });
@@ -488,18 +492,26 @@ Reply briefly with the exact step or insight I need. Do NOT pose another practic
 
           <div style={{ marginTop: '8px', background: C.card, border: `1px solid ${C.border}`, borderRadius: '8px', padding: '10px' }}>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100px, 100%), 1fr))', gap: '8px' }}>
-              <div style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: '8px', padding: '8px', textAlign: 'center' }}>
+              <div style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: '8px', padding: '8px', textAlign: 'center' }} title="Total answers you've submitted across all formulas.">
                 <div style={{ fontSize: '11px', color: C.dim }}>Attempts</div>
                 <div style={{ fontSize: '18px', fontWeight: 700, color: C.text }}>{summary.attempts}</div>
               </div>
-              <div style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: '8px', padding: '8px', textAlign: 'center' }}>
+              <div
+                style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: '8px', padding: '8px', textAlign: 'center' }}
+                title="A card is mastered after 2 correct answers in a row. Getting one wrong resets that card's streak."
+              >
                 <div style={{ fontSize: '11px', color: C.dim }}>Mastered</div>
-                <div style={{ fontSize: '18px', fontWeight: 700, color: C.d3 }}>{summary.mastered}</div>
+                <div style={{ fontSize: '18px', fontWeight: 700, color: C.d3 }}>
+                  {summary.mastered}<span style={{ fontSize: '12px', color: C.dim, fontWeight: 500 }}> / {summary.tracked || 0}</span>
+                </div>
               </div>
-              <div style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: '8px', padding: '8px', textAlign: 'center' }}>
+              <div style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: '8px', padding: '8px', textAlign: 'center' }} title="Correct answers ÷ total attempts.">
                 <div style={{ fontSize: '11px', color: C.dim }}>Accuracy</div>
                 <div style={{ fontSize: '18px', fontWeight: 700, color: C.amber }}>{summary.accuracyPct}%</div>
               </div>
+            </div>
+            <div style={{ marginTop: '8px', fontSize: '11px', color: C.dim, lineHeight: 1.5 }}>
+              <span style={{ color: C.d3, fontWeight: 600 }}>How mastery works:</span> answer a card correctly twice in a row to mark it mastered. A wrong answer resets that card's streak and pushes it back into rotation. Keep going — every formula has its own card.
             </div>
           </div>
 
@@ -611,9 +623,35 @@ function renderTurn(turn: Turn, idx: number, handlers: RenderHandlers) {
           border: `1px solid ${ok ? '#bbf7d0' : '#fecaca'}`,
           background: ok ? '#f0fdf4' : '#fef2f2',
         }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 700, color: ok ? '#166534' : '#991b1b', marginBottom: '8px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 700, color: ok ? '#166534' : '#991b1b', marginBottom: '8px', flexWrap: 'wrap' }}>
             <span style={{ fontSize: '16px' }}>{ok ? '✓' : '✗'}</span>
-            {ok ? 'Correct!' : 'Not quite — let\'s look at it.'}
+            {ok ? (turn.mastered ? 'Mastered!' : 'Correct!') : 'Not quite — let\'s look at it.'}
+            {ok && (
+              <span
+                title="Get this card right twice in a row to master it."
+                style={{
+                  fontSize: '11px', fontWeight: 700, padding: '2px 8px', borderRadius: '999px',
+                  background: turn.mastered ? '#166534' : '#dcfce7',
+                  color: turn.mastered ? '#ffffff' : '#166534',
+                  border: `1px solid ${turn.mastered ? '#166534' : '#86efac'}`,
+                  letterSpacing: '0.04em',
+                }}
+              >
+                {turn.mastered ? 'MASTERED ★' : `STREAK ${Math.min(turn.reps, 2)}/2`}
+              </span>
+            )}
+            {!ok && (
+              <span
+                title="Wrong answers reset this card's streak. Two correct in a row to master."
+                style={{
+                  fontSize: '11px', fontWeight: 700, padding: '2px 8px', borderRadius: '999px',
+                  background: '#fee2e2', color: '#991b1b', border: '1px solid #fecaca',
+                  letterSpacing: '0.04em',
+                }}
+              >
+                STREAK RESET
+              </span>
+            )}
             {ok && (
               <span style={{ marginLeft: 'auto', fontSize: '12px', color: C.dim, fontWeight: 500 }}>
                 Answer: <span style={{ color: C.text, fontWeight: 700 }}>{turn.expected}</span>
