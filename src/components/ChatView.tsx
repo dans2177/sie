@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { C } from '../data/colors';
 import { extractMcqOptions, parseAssistantOutcome, renderChatContent } from '../lib/chatHelpers';
-import type { ChatMessage, SelectedTopic } from '../types/index';
+import type { ChatMessage, McqOption, SelectedTopic } from '../types/index';
 
 export default function ChatView({
   sel,
@@ -23,7 +23,7 @@ export default function ChatView({
   inp: string;
   onInpChange: (v: string) => void;
   onSend: () => void;
-  onQuickAnswer: (choice: string) => void;
+  onQuickAnswer: (pick: McqOption, all: McqOption[], questionPrompt: string | undefined) => void;
   speakIdx: number | string | null;
   onSpeak: (text: string, idx: number | string) => void;
   spRate: number;
@@ -170,8 +170,28 @@ export default function ChatView({
       >
         {msgs
           .filter((m, i) => !(i === 0 && m.role === 'user'))
-          .map((msg, i) => (
+          .map((msg, i) => {
+            const meta = msg.meta;
+            const showUserBadge = msg.role === 'user' && meta?.userAnswerLabel;
+            const correctness = meta?.isCorrect;
+            return (
             <div key={i}>
+              {showUserBadge && (
+                <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '4px' }}>
+                  <span style={{
+                    fontSize: '11px',
+                    color: correctness === true ? C.d3 : correctness === false ? '#ef4444' : C.dim,
+                    background: C.panel,
+                    border: `1px solid ${C.border}`,
+                    padding: '2px 8px',
+                    borderRadius: '999px',
+                  }}>
+                    {correctness === true ? '✓ ' : correctness === false ? '✗ ' : ''}
+                    Picked {meta?.userAnswerLabel}
+                    {meta?.correctAnswerLabel && correctness === false ? ` · correct: ${meta.correctAnswerLabel}` : ''}
+                  </span>
+                </div>
+              )}
               <div
                 style={{
                   display: 'flex',
@@ -220,6 +240,9 @@ export default function ChatView({
               {msg.role === 'assistant' && (() => {
                 const options = extractMcqOptions(msg.content);
                 if (options.length < 2) return null;
+                // Hide options after the user has already answered the next turn.
+                const next = msgs[msgs.indexOf(msg) + 1];
+                if (next && next.role === 'user') return null;
                 return (
                   <div
                     style={{
@@ -234,7 +257,11 @@ export default function ChatView({
                     {options.map((opt) => (
                       <button
                         key={`${i}-${opt.label}`}
-                        onClick={() => onQuickAnswer(`My answer is ${opt.label}. ${opt.text}`)}
+                        onClick={() => {
+                          // Find the question prompt (nearest line above options).
+                          const stem = msg.content.split('\n').filter((l) => l.trim()).find((l) => /\?\s*$/.test(l.trim())) || undefined;
+                          onQuickAnswer(opt, options, stem);
+                        }}
                         disabled={loading}
                         style={{
                           padding: '6px 10px',
@@ -254,7 +281,8 @@ export default function ChatView({
                 );
               })()}
             </div>
-          ))}
+            );
+          })}
         {loading && (
           <div style={{ display: 'flex', alignItems: 'flex-start', gap: '6px' }}>
             <div style={{ width: '26px', flexShrink: 0 }} />

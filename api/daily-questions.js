@@ -1,11 +1,35 @@
-import Anthropic from '@anthropic-ai/sdk';
+import Anthropic, { APIError } from '@anthropic-ai/sdk';
 
 function send(res, code, payload) {
   res.status(code).setHeader('Content-Type', 'application/json');
   res.end(JSON.stringify(payload));
 }
 
-function extractJsonArray(text) {
+function classifyAnthropicError(error) {
+  if (error instanceof APIError) {
+    const status = typeof error.status === 'number' ? error.status : 500;
+    let kind = 'upstream_error';
+    if (status === 401) kind = 'auth_error';
+    else if (status === 403) kind = 'forbidden';
+    else if (status === 429) kind = 'rate_limited';
+    else if (status === 529) kind = 'overloaded';
+    else if (status >= 500) kind = 'upstream_error';
+    else if (status === 400) kind = 'bad_request';
+    return { status, kind, message: error.message || 'Anthropic API error' };
+  }
+  return { status: 500, kind: 'unknown', message: error instanceof Error ? error.message : 'Unknown error' };
+}
+
+function extractToolQuestions(response) {
+  const block = response.content.find((b) => b.type === 'tool_use' && b.name === 'submit_questions');
+  if (block && block.input && Array.isArray(block.input.questions)) {
+    return block.input.questions;
+  }
+  // Fallback: legacy text/JSON if model ignored the tool.
+  const text = response.content
+    .filter((b) => b.type === 'text')
+    .map((b) => (b.type === 'text' ? b.text : ''))
+    .join('\n');
   const fenced = (text.match(/```json\s*([\s\S]*?)```/i) || [])[1] || text;
   const trimmed = String(fenced || '').trim();
   try {
@@ -125,25 +149,49 @@ export default async function handler(req, res) {
     const system = `You write high-quality SIE exam questions.
 
 Rules:
-- Return ONLY a JSON array with exactly ${total} objects.
-- No markdown, no prose, no code fences.
-- Each object schema:
-  {
-    "prompt": string,
-    "options": [string, string, string, string],
-    "answerIndex": number,
-    "explanation": string,
-    "topicId": string,
-    "topicTitle": string
-  }
-- Questions must be realistic SIE style: scenario-based when possible, regulation/product suitability, calculations where relevant.
-- One clearly best answer only.
+- Call the submit_questions tool exactly once with exactly ${total} questions.
+- Each question must be realistic SIE-style: scenario-based when possible, regulation/product suitability, calculations where relevant.
+- One clearly best answer per question.
 - Include a short explanation of why the correct answer is correct.
-- Keep difficulty mixed (easy/medium/hard) with emphasis on exam-like relevance.
+- Mix difficulties (easy/medium/hard) with emphasis on exam-like relevance.
 - Use only the provided SIE blueprint and topic IDs.
-- At least ${minMathQuestions} questions must be equation/calculation focused.
-- For equation/calculation items, include realistic numbers and a calculation-oriented explanation.
+- At least ${minMathQuestions} questions must be equation/calculation focused with realistic numbers.
 - Never prepend answer letters to option text; options must be clean strings only.`;
+
+    const tools = [
+      {
+        name: 'submit_questions',
+        description: `Submit exactly ${total} SIE exam questions for today.`,
+        input_schema: {
+          type: 'object',
+          properties: {
+            questions: {
+              type: 'array',
+              minItems: total,
+              maxItems: total,
+              items: {
+                type: 'object',
+                required: ['prompt', 'options', 'answerIndex', 'explanation', 'topicId', 'topicTitle'],
+                properties: {
+                  prompt: { type: 'string', minLength: 10 },
+                  options: {
+                    type: 'array',
+                    minItems: 4,
+                    maxItems: 4,
+                    items: { type: 'string', minLength: 1 },
+                  },
+                  answerIndex: { type: 'integer', minimum: 0, maximum: 3 },
+                  explanation: { type: 'string', minLength: 5 },
+                  topicId: { type: 'string', minLength: 1 },
+                  topicTitle: { type: 'string', minLength: 1 },
+                },
+              },
+            },
+          },
+          required: ['questions'],
+        },
+      },
+    ];
 
   const user = `Date: ${date}\nProfile: ${profileId}\nWeak topics (prioritize): ${preferredTopicIds.join(', ') || 'none'}\n\nAdaptive context:\n${adaptiveBrief || 'none'}\n\nAllowed topic IDs:\n${[...topicMap.keys()].join(', ')}\n\nSIE Blueprint:\n${blueprint}\n\nMath Blueprint (must be used for quantitative items):\n${mathBlueprint || 'none provided'}`;
 
@@ -159,19 +207,18 @@ Rules:
 
         const response = await client.messages.create({
           model: 'claude-sonnet-4-6',
-          max_tokens: 2600,
-          system,
+          max_tokens: 4000,
+          system: [
+            { type: 'text', text: system, cache_control: { type: 'ephemeral' } },
+          ],
+          tools,
+          tool_choice: { type: 'tool', name: 'submit_questions' },
           messages: [{ role: 'user', content: `${user}${correction}` }],
         });
 
-        const text = response.content
-          .filter((b) => b.type === 'text')
-          .map((b) => (b.type === 'text' ? b.text : ''))
-          .join('\n');
-
-        const raw = extractJsonArray(text);
+        const raw = extractToolQuestions(response);
         if (!raw) {
-          lastIssue = 'Model did not return a valid JSON array';
+          lastIssue = 'Model did not return a valid questions tool call';
           continue;
         }
 
@@ -203,6 +250,7 @@ Rules:
 
       return send(res, 422, { ok: false, error: `Question generation failed validation after ${attempts} attempts: ${lastIssue}` });
   } catch (error) {
-    return send(res, 500, { ok: false, error: error instanceof Error ? error.message : 'Unknown error' });
+    const info = classifyAnthropicError(error);
+    return send(res, info.status, { ok: false, kind: info.kind, error: info.message });
   }
 }

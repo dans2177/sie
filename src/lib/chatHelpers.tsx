@@ -1,14 +1,45 @@
 import React from 'react';
+import { InlineMath, BlockMath } from 'react-katex';
 import { C } from '../data/colors';
 import type { ChatMessage } from '../types/index';
 
+// Inline math: $...$ (single $, no spaces directly inside delimiters), or \(...\)
+const INLINE_MATH_RE = /(\$[^$\n]+?\$|\\\([^\n]+?\\\))/g;
+
+function stripInlineDelims(s: string): string {
+  if (s.startsWith('$') && s.endsWith('$')) return s.slice(1, -1);
+  if (s.startsWith('\\(') && s.endsWith('\\)')) return s.slice(2, -2);
+  return s;
+}
+
 export function renderInlineMarkup(text: string, keyPrefix: string): React.ReactNode[] {
-  return text.split(/(\*\*[^*]+\*\*)/g).map((part, idx) => {
-    if (part.startsWith('**') && part.endsWith('**') && part.length > 4) {
-      return <strong key={`${keyPrefix}-${idx}`}>{part.slice(2, -2)}</strong>;
+  // First split on inline math so we don't try to bold-parse inside LaTeX.
+  const mathParts = text.split(INLINE_MATH_RE);
+  const out: React.ReactNode[] = [];
+  mathParts.forEach((part, mi) => {
+    if (!part) return;
+    const isMath = INLINE_MATH_RE.test(part);
+    INLINE_MATH_RE.lastIndex = 0;
+    if (isMath) {
+      try {
+        out.push(
+          <InlineMath key={`${keyPrefix}-m-${mi}`} math={stripInlineDelims(part)} />
+        );
+      } catch {
+        out.push(<span key={`${keyPrefix}-m-${mi}`}>{part}</span>);
+      }
+      return;
     }
-    return <span key={`${keyPrefix}-${idx}`}>{part}</span>;
+    part.split(/(\*\*[^*]+\*\*)/g).forEach((sub, si) => {
+      if (!sub) return;
+      if (sub.startsWith('**') && sub.endsWith('**') && sub.length > 4) {
+        out.push(<strong key={`${keyPrefix}-${mi}-${si}`}>{sub.slice(2, -2)}</strong>);
+      } else {
+        out.push(<span key={`${keyPrefix}-${mi}-${si}`}>{sub}</span>);
+      }
+    });
   });
+  return out;
 }
 
 export function extractMcqOptions(content: string): Array<{ label: string; text: string }> {
@@ -158,6 +189,45 @@ export function renderChatContent(content: string) {
       continue;
     }
 
+    // Block math: $$...$$ on a single line, or starts a multi-line block.
+    if (trimmed.startsWith('$$')) {
+      const rest = trimmed.slice(2);
+      const closeIdx = rest.indexOf('$$');
+      let math = '';
+      if (closeIdx >= 0) {
+        math = rest.slice(0, closeIdx).trim();
+      } else {
+        const buf: string[] = [rest];
+        let j = i + 1;
+        while (j < lines.length) {
+          const r = lines[j];
+          const t = r.trim();
+          const k = t.indexOf('$$');
+          if (k >= 0) {
+            buf.push(t.slice(0, k));
+            i = j;
+            break;
+          }
+          buf.push(r);
+          j += 1;
+        }
+        math = buf.join('\n').trim();
+        if (i !== j) i = j;
+      }
+      if (math) {
+        try {
+          out.push(
+            <div key={`bm-${i}`} style={{ margin: '8px 0', overflowX: 'auto' }}>
+              <BlockMath math={math} />
+            </div>
+          );
+        } catch {
+          out.push(<pre key={`bm-${i}`}>{math}</pre>);
+        }
+        continue;
+      }
+    }
+
     if (isTableStart) {
       const header = parseTableCells(trimmed);
       const rows: string[][] = [];
@@ -285,10 +355,49 @@ export function countCorrectAnswers(messages: ChatMessage[]): number {
 
 export function upsertAssistantMessage(messages: ChatMessage[], content: string): ChatMessage[] {
   const next = [...messages];
-  if (next[next.length - 1]?.role === 'assistant') {
-    next[next.length - 1] = { role: 'assistant', content };
+  const last = next[next.length - 1];
+  if (last?.role === 'assistant') {
+    next[next.length - 1] = { ...last, role: 'assistant', content };
   } else {
     next.push({ role: 'assistant', content });
   }
   return next;
+}
+
+/** Best-effort extraction of the most recent multiple-choice stem from an assistant turn. */
+export function extractMcqQuestionPrompt(content: string): string | undefined {
+  const text = String(content || '').replace(/\[OUTCOME:[A-Z_]+\]\s*/gi, '').trim();
+  if (!text) return undefined;
+  const lines = text.split('\n');
+  // Find first option line; the stem is the nearest non-empty preceding line.
+  let firstOptionIdx = -1;
+  for (let i = 0; i < lines.length; i += 1) {
+    if (/^\s*(?:[-*]\s*)?(?:\*\*)?[A-D](?:\*\*)?\s*[\)\].:\-]\s+\S/i.test(lines[i])) {
+      firstOptionIdx = i;
+      break;
+    }
+  }
+  if (firstOptionIdx === -1) return undefined;
+  for (let i = firstOptionIdx - 1; i >= 0; i -= 1) {
+    const t = lines[i].trim();
+    if (t) return t.replace(/^#+\s*/, '').replace(/\*\*/g, '');
+  }
+  return undefined;
+}
+
+/** Try to read which option label the assistant flagged as correct. */
+export function extractCorrectAnswerLabel(content: string): string | undefined {
+  const text = String(content || '');
+  // Common phrasings the model uses.
+  const patterns: RegExp[] = [
+    /\b(?:correct\s+answer\s+is|the\s+answer\s+is|answer\s*[:=]?\s*)\(?\s*\**([A-D])\**\s*\)?/i,
+    /^\s*\(?\s*([A-D])\s*\)?\s+is\s+correct/im,
+    /\bcorrect\s*[:\-]\s*\(?\s*([A-D])\s*\)?/i,
+    /\b(?:option|choice)\s*\(?\s*([A-D])\s*\)?\s+is\s+correct/i,
+  ];
+  for (const re of patterns) {
+    const m = text.match(re);
+    if (m) return m[1].toUpperCase();
+  }
+  return undefined;
 }

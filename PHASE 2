@@ -1,0 +1,236 @@
+You are working on the SIE Master app (React 19 + TypeScript + Vite + Tailwind v4 + Anthropic SDK). 
+This is a 3-phase migration. Complete each phase fully before moving to the next. 
+After each phase, STOP and give me a summary of what changed and what to test.
+
+================================================================
+PROJECT CONTEXT
+================================================================
+- Frontend-only Vite app currently using @vercel/blob + localStorage for persistence
+- Chat uses streaming via @anthropic-ai/sdk with model "claude-opus-4-7"
+- Quiz mode generates 10 questions via Claude, scores them, and saves results
+- Existing storage file: src/lib/storage/blobStorage.ts
+- Existing API client: src/lib/api/claudeClient.ts
+- Existing quiz logic: src/lib/api/quizGenerator.ts
+- Main UI orchestrator: src/components/Layout/MainLayout.tsx
+- Renders messages via raw dangerouslySetInnerHTML in src/components/Chat/MessageItem.tsx (this is bad)
+- KaTeX + react-katex are already installed but UNUSED — formulas render as raw `$...$` strings
+
+================================================================
+PHASE 1 — REPLACE VERCEL BLOB WITH SUPABASE (full persistence)
+================================================================
+
+GOAL: Every piece of user state persists to Supabase, loads on app mount, 
+and survives refresh / device switch. localStorage becomes an offline cache only.
+
+1. Install + remove
+   - Remove: @vercel/blob
+   - Add: @supabase/supabase-js
+   - Update vercel.json env block accordingly
+
+2. Env vars (add to .env, .env.example, and README)
+   - VITE_SUPABASE_URL
+   - VITE_SUPABASE_ANON_KEY
+
+3. Create src/lib/supabase/client.ts
+   - Export a singleton Supabase client
+   - Throw a clear error at startup if env vars missing
+
+4. Schema — generate a single SQL file at supabase/schema.sql I can paste into 
+   the Supabase SQL editor. Include:
+   - users_profile (id uuid pk = auth.uid(), created_at)
+   - chat_sessions (id, user_id fk, title, created_at, updated_at)
+   - chat_messages (id, session_id fk, role check in ('user','assistant'), 
+     content text, tokens_in int, tokens_out int, created_at)
+   - quiz_results (id, user_id, topic, difficulty, score int, total int, 
+     percentage int, topics_failed text[], created_at)
+   - quiz_questions_archive (id, quiz_result_id fk, question, options jsonb, 
+     correct_answer int, user_answer int, explanation, topic, difficulty, was_correct bool)
+   - topic_progress (id, user_id, topic, attempts int, correct int, last_review timestamptz)
+   - notes (id, user_id, topic, content, created_at)
+   - saved_equations (user_id, equation_id, saved_at — composite pk)
+   - user_preferences (user_id pk, dark_mode bool, last_category text, last_quiz_topic text, last_quiz_difficulty text)
+   - RLS enabled on every table with policies "user can only see/modify their own rows"
+   - Indexes on user_id and created_at where appropriate
+
+5. Auth
+   - Add anonymous auth via supabase.auth.signInAnonymously() on first load
+   - Persist the resulting session — Supabase handles this by default but verify
+   - Expose useAuth() hook in src/lib/supabase/useAuth.ts that returns { userId, loading }
+   - Block app render until auth resolves (show a small splash)
+
+6. Replace src/lib/storage/blobStorage.ts with src/lib/storage/supabaseStorage.ts
+   Required functions (all async, all typed, all wrapped in try/catch with 
+   localStorage fallback writes for offline resilience):
+   - loadAllUserData(userId) — single fetch, returns full UserData shape
+   - saveChatMessage(sessionId, message)
+   - createChatSession(title) -> sessionId
+   - listChatSessions(userId)
+   - loadChatMessages(sessionId)
+   - addQuizResult(result, questions[]) — writes both quiz_results and quiz_questions_archive
+   - loadQuizHistory(userId, limit?)
+   - updateTopicProgress(userId, topic, correct)
+   - getProgressStats(userId) — same return shape as current getProgressStats
+   - addNote / deleteNote / listNotes
+   - toggleSavedEquation / listSavedEquations
+   - getPreferences / updatePreferences
+
+7. Wire it up
+   - MainLayout: on mount, await loadAllUserData and hydrate state
+   - MainLayout: dark mode toggle now writes to user_preferences (and localStorage as cache)
+   - MainLayout: when sending a chat message, persist BOTH user message and 
+     assistant response to chat_messages (assistant message saved on stream completion)
+   - Quiz finish: save full quiz + every question/answer to quiz_questions_archive
+   - Resources panel: read live stats from Supabase (not just session counts)
+
+8. Migration helper
+   - Add src/lib/storage/migrateFromLocalStorage.ts that on first authenticated 
+     load checks for the old "sie-tutor-data" localStorage key, pushes its 
+     contents to Supabase, then deletes the key
+
+ACCEPTANCE FOR PHASE 1:
+- npm run build passes with zero TS errors
+- Hard refresh preserves: chat history, quiz history, dark mode, progress, notes
+- Opening app on a second browser with the same anon session restores nothing 
+  (expected — anon is device-bound) but the schema supports later email auth upgrade
+- Network tab shows Supabase calls, zero @vercel/blob references remain
+- grep -r "vercel/blob" src returns nothing
+
+================================================================
+PHASE 2 — FIX MESSAGE RENDERING + AI BEST PRACTICES
+================================================================
+
+GOAL: Chat output looks like a real AI tutor product, not a regex hack. 
+Apply current Anthropic SDK best practices to every Claude call.
+
+A. RENDERING (rip out the dangerouslySetInnerHTML in MessageItem.tsx)
+
+1. Install: react-markdown, remark-gfm, remark-math, rehype-katex, 
+   rehype-highlight, highlight.js, dompurify (defense in depth — though 
+   react-markdown already escapes by default)
+
+2. Rewrite src/components/Chat/MessageItem.tsx
+   - Use react-markdown with plugins: [remarkGfm, remarkMath] and 
+     rehypePlugins: [rehypeKatex, rehypeHighlight]
+   - Custom component overrides for: code (inline vs block), pre, table, 
+     blockquote, h1-h3, ul/ol, a (open in new tab + rel="noopener noreferrer")
+   - Import 'katex/dist/katex.min.css' and a highlight.js theme in main.tsx
+   - User messages: render as plain text (no markdown parsing — security + intent)
+   - Assistant messages: full markdown + LaTeX + code highlighting
+   - Add a subtle "Copy" button on assistant message hover that copies the 
+     raw markdown
+   - Add a streaming cursor (▍) at the end of the in-flight assistant message
+   - Animate message entry with framer-motion (already installed)
+
+3. Update EquationCard.tsx
+   - Replace the raw `<code>${equation.formula}$</code>` with <BlockMath math={equation.formula} />
+   - Use react-katex (already installed)
+
+B. CLAUDE API BEST PRACTICES (src/lib/api/claudeClient.ts)
+
+1. Stop stuffing the entire SIE content blob into the system prompt every call. 
+   Move it behind prompt caching:
+   - Use `system` as an array with two blocks
+   - Block 1: persistent role/instructions (small)
+   - Block 2: the SIE knowledge base with `cache_control: { type: 'ephemeral' }`
+   - Keep `model: 'claude-opus-4-7'`
+
+2. Conversation handling
+   - Replace the .slice(-10) hack with a token-budget approach: 
+     keep messages until estimated tokens > 150k, then drop oldest pairs 
+     (always keep pairs intact — never orphan a user message)
+   - Always pass full conversation history from Supabase, not just in-memory state
+
+3. Streaming
+   - Use the SDK's `messages.stream()` event handlers properly: 
+     onText, onMessage, onError, onFinalMessage
+   - Capture and persist final usage (input_tokens, output_tokens, 
+     cache_creation_input_tokens, cache_read_input_tokens) on each message row
+
+4. Error handling
+   - Distinguish 401 (bad key), 429 (rate limit — show retry-after), 
+     529 (overloaded — auto-retry once with backoff), network errors
+   - Surface human-readable errors to the UI, not raw stack traces
+
+5. Quiz generator (src/lib/api/quizGenerator.ts)
+   - Stop regex-extracting JSON. Use structured output via tool_use:
+     - Define a tool `submit_quiz_questions` with a strict input_schema 
+       (array of {question, options[4], correctAnswer 0-3, explanation, topic, difficulty})
+     - Force the model to call it with `tool_choice: { type: 'tool', name: 'submit_quiz_questions' }`
+     - Parse from tool_use block — guaranteed valid JSON
+   - Delete the generateFallbackQuestions stub (it's misleading garbage data)
+   - On failure, surface the real error to the UI with a Retry button
+
+6. System prompt rewrite
+   - Tighten to <500 tokens of actual instructions
+   - Add: response should use markdown headers, KaTeX `$...$` for inline 
+     and `$$...$$` for block math, fenced code blocks for examples
+   - Add explicit format rules so rendering Phase 2A actually has something to render
+
+C. CHAT UX
+
+1. ChatPanel.tsx
+   - Suggested-question buttons currently only fill the input — make them 
+     auto-send (less friction)
+   - Show token usage indicator (current conversation tokens / 200k)
+   - Add "New conversation" button that creates a fresh chat_session
+   - Add session list sidebar (collapsible) showing past chat_sessions
+   - Auto-grow textarea up to ~6 rows
+   - Disable send button visually + show inline spinner inside it (not a separate "...")
+
+2. Stop the buggy assistant-message creation in MainLayout
+   - Current code only creates the assistant message AFTER streaming finishes 
+     in some branches — should create an empty assistant message immediately, 
+     then append chunks to it. Fix this.
+
+ACCEPTANCE FOR PHASE 2:
+- Asking "Show me the bond pricing formula" renders real LaTeX, not `$P = ...$` text
+- Asking for code returns syntax-highlighted code blocks
+- Tables, lists, bold, headers all render properly
+- Quiz generation never falls back to placeholder questions
+- Network tab shows cache_read_input_tokens > 0 on the second message
+- No more dangerouslySetInnerHTML anywhere in the codebase
+- Streaming shows a live cursor that disappears on completion
+
+================================================================
+PHASE 3 — VERIFICATION & POLISH
+================================================================
+
+1. Run through this checklist manually and report results:
+   [ ] Fresh load with empty Supabase: app boots, anon auth succeeds, empty state renders
+   [ ] Send chat → refresh → message persists
+   [ ] Take quiz → refresh → quiz appears in history with score
+   [ ] Toggle dark mode → refresh → preference persists
+   [ ] Save an equation → refresh → still saved
+   [ ] Add a note → refresh → still there
+   [ ] Network offline: app still renders cached data, queues writes (use 
+       localStorage as write-behind cache, flush on reconnect)
+   [ ] Open DevTools → Application → no sensitive keys in localStorage
+   [ ] All TS strict checks pass (npm run build)
+   [ ] Lint passes (npm run lint) — fix anything broken
+
+2. Add a top-level ErrorBoundary component wrapping <MainLayout /> that 
+   catches render errors, logs to console, and shows a friendly retry screen.
+
+3. Update README.md
+   - Replace all Vercel Blob references with Supabase setup instructions
+   - Add the schema.sql paste instructions
+   - Add "Run these in Supabase SQL editor" step
+   - Document the env vars
+
+4. Final pass: search the codebase for `TODO`, `FIXME`, `console.log` 
+   that aren't intentional, and dead imports. Clean them up.
+
+================================================================
+RULES OF ENGAGEMENT
+================================================================
+- Do NOT change the visual design (colors, layout, header gradient) — only fix what's broken
+- Preserve the 3-column study layout and quiz mode flow
+- Don't introduce new state libraries — Zustand is already installed, use it 
+  if you need shared state, otherwise stick with React state + Supabase
+- Every async function gets proper error handling — no swallowed catches
+- Every Supabase call gets RLS-tested — if I'm signed in as user A, I cannot 
+  read user B's data
+- Show me the schema.sql BEFORE running it so I can review
+- After each phase, pause and summarize what changed in which files
+
+Start with Phase 1, Step 1. Confirm you understand the plan before writing code.

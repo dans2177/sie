@@ -1,8 +1,23 @@
-import Anthropic from '@anthropic-ai/sdk';
+import Anthropic, { APIError } from '@anthropic-ai/sdk';
 
 function send(res, code, payload) {
   res.status(code).setHeader('Content-Type', 'application/json');
   res.end(JSON.stringify(payload));
+}
+
+function classifyAnthropicError(error) {
+  if (error instanceof APIError) {
+    const status = typeof error.status === 'number' ? error.status : 500;
+    let kind = 'upstream_error';
+    if (status === 401) kind = 'auth_error';
+    else if (status === 403) kind = 'forbidden';
+    else if (status === 429) kind = 'rate_limited';
+    else if (status === 529) kind = 'overloaded';
+    else if (status >= 500) kind = 'upstream_error';
+    else if (status === 400) kind = 'bad_request';
+    return { status, kind, message: error.message || 'Anthropic API error' };
+  }
+  return { status: 500, kind: 'unknown', message: error instanceof Error ? error.message : 'Unknown error' };
 }
 
 function buildSystemPrompt(topic, domain, adaptiveBrief) {
@@ -16,6 +31,7 @@ Rules:
 - Cite FINRA/SEC rule numbers when directly relevant.
 - Use mnemonics where genuinely helpful.
 - When hierarchy/process visuals help, include a compact chart in a fenced code block using arrows (example: A -> B -> C).
+- For math, use LaTeX delimiters: $...$ for inline (e.g. $YTM$) and $$...$$ on its own block lines for displayed equations. Do NOT escape with backticks.
 - Use a mastery cadence: teach -> test -> diagnose mistake pattern -> retest with variation.
 - Prefer realistic SIE-style scenarios over definition-only drills.
 - Keep tone supportive and motivating for repeat daily practice.
@@ -85,10 +101,14 @@ export default async function handler(req, res) {
 
     const client = new Anthropic({ apiKey });
 
+    const systemText = buildSystemPrompt(topic, domain, adaptiveBrief);
     const reqConfig = {
       model: 'claude-sonnet-4-6',
       max_tokens: 1000,
-      system: buildSystemPrompt(topic, domain, adaptiveBrief),
+      // Cache the (large, mostly-static) system prompt so repeat turns reuse it.
+      system: [
+        { type: 'text', text: systemText, cache_control: { type: 'ephemeral' } },
+      ],
       messages: apiMessages,
     };
 
@@ -115,9 +135,8 @@ export default async function handler(req, res) {
         res.end();
         return;
       } catch (error) {
-        res.write(
-          `${JSON.stringify({ type: 'error', error: error instanceof Error ? error.message : 'Unknown error' })}\n`
-        );
+        const info = classifyAnthropicError(error);
+        res.write(`${JSON.stringify({ type: 'error', kind: info.kind, status: info.status, error: info.message })}\n`);
         res.end();
         return;
       }
@@ -134,6 +153,7 @@ export default async function handler(req, res) {
 
     return send(res, 200, { ok: true, text });
   } catch (error) {
-    return send(res, 500, { ok: false, error: error instanceof Error ? error.message : 'Unknown error' });
+    const info = classifyAnthropicError(error);
+    return send(res, info.status, { ok: false, kind: info.kind, error: info.message });
   }
 }

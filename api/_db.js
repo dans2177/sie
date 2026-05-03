@@ -4,7 +4,13 @@ let sql;
 let initialized = false;
 
 function getConnectionString() {
-  return process.env.DATABASE_URL || process.env.POSTGRES_URL || process.env.POSTGRES_URL_NON_POOLING;
+  return (
+    process.env.SUPABASE_DB_URL ||
+    process.env.SUPABASE_DB_URL_DIRECT ||
+    process.env.DATABASE_URL ||
+    process.env.POSTGRES_URL ||
+    process.env.POSTGRES_URL_NON_POOLING
+  );
 }
 
 export function getSql() {

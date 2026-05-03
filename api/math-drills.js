@@ -1,8 +1,23 @@
-import Anthropic from '@anthropic-ai/sdk';
+import Anthropic, { APIError } from '@anthropic-ai/sdk';
 
 function send(res, code, payload) {
   res.status(code).setHeader('Content-Type', 'application/json');
   res.end(JSON.stringify(payload));
+}
+
+function classifyAnthropicError(error) {
+  if (error instanceof APIError) {
+    const status = typeof error.status === 'number' ? error.status : 500;
+    let kind = 'upstream_error';
+    if (status === 401) kind = 'auth_error';
+    else if (status === 403) kind = 'forbidden';
+    else if (status === 429) kind = 'rate_limited';
+    else if (status === 529) kind = 'overloaded';
+    else if (status >= 500) kind = 'upstream_error';
+    else if (status === 400) kind = 'bad_request';
+    return { status, kind, message: error.message || 'Anthropic API error' };
+  }
+  return { status: 500, kind: 'unknown', message: error instanceof Error ? error.message : 'Unknown error' };
 }
 
 function extractJsonArray(text) {
@@ -79,7 +94,13 @@ export default async function handler(req, res) {
       model: 'claude-sonnet-4-6',
       max_tokens: 1400,
       temperature: 0.9,
-      system: 'You produce strict JSON for educational math practice content.',
+      system: [
+        {
+          type: 'text',
+          text: 'You produce strict JSON for educational math practice content.',
+          cache_control: { type: 'ephemeral' },
+        },
+      ],
       messages: [
         {
           role: 'user',
@@ -173,7 +194,8 @@ export default async function handler(req, res) {
         return;
       } catch (error) {
         clearInterval(heartbeat);
-        res.write(`${JSON.stringify({ type: 'error', error: error instanceof Error ? error.message : 'Unknown error' })}\n`);
+        const info = classifyAnthropicError(error);
+        res.write(`${JSON.stringify({ type: 'error', kind: info.kind, status: info.status, error: info.message })}\n`);
         res.end();
         return;
       }
@@ -190,6 +212,7 @@ export default async function handler(req, res) {
     const questions = extractJsonArray(text);
     return send(res, 200, { ok: true, questions });
   } catch (error) {
-    return send(res, 500, { ok: false, error: error instanceof Error ? error.message : 'Unknown error' });
+    const info = classifyAnthropicError(error);
+    return send(res, info.status, { ok: false, kind: info.kind, error: info.message });
   }
 }

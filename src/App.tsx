@@ -25,7 +25,7 @@ import {
   saveTopicChatRemote,
   syncProgress,
 } from './lib/server';
-import { countCorrectAnswers, parseAssistantOutcome, upsertAssistantMessage } from './lib/chatHelpers';
+import { countCorrectAnswers, extractCorrectAnswerLabel, parseAssistantOutcome, upsertAssistantMessage } from './lib/chatHelpers';
 import type { ChatMessage, Domain, MemorySummary, SelectedTopic, Topic, View } from './types/index';
 import AccessGate from './components/AccessGate';
 import AppHeader from './components/AppHeader';
@@ -296,7 +296,7 @@ export default function App() {
   );
 
   const sendWithText = useCallback(
-    async (rawText: string) => {
+    async (rawText: string, userMeta?: import('./types/index').ChatAnswerMeta) => {
       if (!rawText.trim() || loading || !sel || !activeProfile) return;
       streamRunRef.current += 1;
       const runId = streamRunRef.current;
@@ -304,25 +304,47 @@ export default function App() {
       const topicId = sel.topic.id;
       const isCurrentRun = () => streamRunRef.current === runId && activeTopicIdRef.current === topicId;
 
-      const next = [...msgs, { role: 'user' as const, content: txt }];
+      const userMsg: ChatMessage = userMeta
+        ? { role: 'user', content: txt, meta: userMeta }
+        : { role: 'user', content: txt };
+      const next: ChatMessage[] = [...msgs, userMsg];
       setMsgs(next);
       saveTopicChat(activeProfile, topicId, next);
       await saveTopicChatRemote(activeProfile, topicId, next);
 
       setLoading(true);
-      log('chat_user_message', { topicId, length: txt.length });
+      log('chat_user_message', { topicId, length: txt.length, hasAnswer: Boolean(userMeta?.userAnswerLabel) });
       try {
         if (isCurrentRun()) setMsgs(upsertAssistantMessage(next, ''));
         const r = await callClaude(next, sel.topic, sel.domain, memory.adaptiveBrief, (snapshot) => {
           if (!isCurrentRun()) return;
           setMsgs((prev) => upsertAssistantMessage(prev, snapshot));
         });
-        const full = upsertAssistantMessage(next, r);
+        const outcome = parseAssistantOutcome(r);
+        const correctLabel = extractCorrectAnswerLabel(r);
+        // Back-fill the user message with isCorrect / correctAnswer when known.
+        let full = upsertAssistantMessage(next, r);
+        if (userMeta?.userAnswerLabel) {
+          const fixedUserMeta: import('./types/index').ChatAnswerMeta = {
+            ...userMeta,
+            outcome,
+            isCorrect: outcome === 'correct'
+              ? true
+              : outcome === 'needsWork'
+                ? false
+                : (correctLabel ? correctLabel === userMeta.userAnswerLabel : userMeta.isCorrect),
+            correctAnswerLabel: correctLabel || userMeta.correctAnswerLabel,
+            correctAnswerText: correctLabel
+              ? userMeta.options?.find((o) => o.label === correctLabel)?.text
+              : userMeta.correctAnswerText,
+          };
+          // Replace the user message in `full` (it sits before the trailing assistant message).
+          full = full.map((m, idx) => (idx === full.length - 2 ? { ...m, meta: fixedUserMeta } : m));
+        }
         if (isCurrentRun()) setMsgs(full);
         saveTopicChat(activeProfile, topicId, full);
         await saveTopicChatRemote(activeProfile, topicId, full);
         markTopicPassed(topicId, full);
-        const outcome = parseAssistantOutcome(r);
         if (outcome !== 'neutral') {
           applyReviewOutcome(topicId, outcome === 'correct');
         }
@@ -332,7 +354,7 @@ export default function App() {
           userMessage: txt,
           assistantMessage: r,
         });
-        log('chat_assistant_message', { topicId, length: r.length });
+        log('chat_assistant_message', { topicId, length: r.length, outcome });
       } catch (e) {
         const full = [...next, { role: 'assistant' as const, content: `Error: ${(e as Error).message}` }];
         if (isCurrentRun()) setMsgs(full);
@@ -352,8 +374,18 @@ export default function App() {
     await sendWithText(txt);
   }, [inp, sendWithText]);
 
-  const sendQuickAnswer = useCallback(async (choice: string) => {
-    await sendWithText(choice);
+  const sendQuickAnswer = useCallback(async (
+    pick: import('./types/index').McqOption,
+    all: import('./types/index').McqOption[],
+    questionPrompt?: string,
+  ) => {
+    const text = `My answer is ${pick.label}. ${pick.text}`;
+    await sendWithText(text, {
+      questionPrompt,
+      options: all,
+      userAnswerLabel: pick.label,
+      userAnswerText: pick.text,
+    });
   }, [sendWithText]);
 
   const findTopicById = useCallback((topicId: string) => {
