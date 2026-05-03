@@ -1,4 +1,5 @@
 import type { ChatMessage, Domain, MathDrillQuestion, Topic } from '../types/index';
+import { loadActiveProfile } from './storage';
 
 const CHAT_TIMEOUT_MS = 60000;
 
@@ -16,7 +17,7 @@ async function callClaudeServerStream(
     const res = await fetch('/api/topic-ai', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messages, topic, domain, adaptiveBrief, stream: true }),
+      body: JSON.stringify({ messages, topic, domain, adaptiveBrief, stream: true, profileId: loadActiveProfile() || undefined }),
       signal: controller.signal,
     });
 
@@ -83,7 +84,7 @@ export async function callClaude(
         const res = await fetch('/api/topic-ai', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ messages, topic, domain, adaptiveBrief }),
+          body: JSON.stringify({ messages, topic, domain, adaptiveBrief, profileId: loadActiveProfile() || undefined }),
           signal: controller.signal,
         });
 
@@ -143,7 +144,7 @@ export async function generateMathDrills({
     const res = await fetch('/api/math-drills', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ formulas, focusFormulaIds, weakFormulaIds, existingQuestionIds, recentPrompts: recentPrompts || [], batchSize, requireCoverage: Boolean(requireCoverage), stream: true }),
+      body: JSON.stringify({ formulas, focusFormulaIds, weakFormulaIds, existingQuestionIds, recentPrompts: recentPrompts || [], batchSize, requireCoverage: Boolean(requireCoverage), stream: true, profileId: loadActiveProfile() || undefined }),
       signal: controller.signal,
     });
 

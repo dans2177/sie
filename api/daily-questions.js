@@ -1,4 +1,5 @@
 import Anthropic, { APIError } from '@anthropic-ai/sdk';
+import { logTokenUsage } from './_db.js';
 
 function send(res, code, payload) {
   res.status(code).setHeader('Content-Type', 'application/json');
@@ -215,6 +216,10 @@ Rules:
           tool_choice: { type: 'tool', name: 'submit_questions' },
           messages: [{ role: 'user', content: `${user}${correction}` }],
         });
+
+        if (response?.usage) {
+          void logTokenUsage({ profileId, endpoint: 'daily-questions', model: 'claude-sonnet-4-6', usage: response.usage });
+        }
 
         const raw = extractToolQuestions(response);
         if (!raw) {

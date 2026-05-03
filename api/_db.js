@@ -103,7 +103,45 @@ export async function ensureTables() {
         updated_at timestamptz not null default now()
       )
     `;
+
+    await tx`
+      create table if not exists token_usage (
+        id bigserial primary key,
+        profile_id text not null,
+        endpoint text not null,
+        model text,
+        input_tokens integer not null default 0,
+        output_tokens integer not null default 0,
+        cache_read_tokens integer not null default 0,
+        cache_creation_tokens integer not null default 0,
+        created_at timestamptz not null default now()
+      )
+    `;
+    await tx`create index if not exists token_usage_profile_day_idx on token_usage (profile_id, created_at desc)`;
   });
 
   initialized = true;
+}
+
+export async function logTokenUsage({ profileId, endpoint, model, usage }) {
+  if (!profileId || !usage) return;
+  try {
+    const db = getSql();
+    if (!db) return;
+    await ensureTables();
+    await db`
+      insert into token_usage (profile_id, endpoint, model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens)
+      values (
+        ${profileId},
+        ${endpoint || 'unknown'},
+        ${model || null},
+        ${Number(usage.input_tokens) || 0},
+        ${Number(usage.output_tokens) || 0},
+        ${Number(usage.cache_read_input_tokens) || 0},
+        ${Number(usage.cache_creation_input_tokens) || 0}
+      )
+    `;
+  } catch (err) {
+    console.warn('[token_usage] log failed', err?.message || err);
+  }
 }

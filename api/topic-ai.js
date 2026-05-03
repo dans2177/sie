@@ -1,4 +1,5 @@
 import Anthropic, { APIError } from '@anthropic-ai/sdk';
+import { logTokenUsage } from './_db.js';
 
 function send(res, code, payload) {
   res.status(code).setHeader('Content-Type', 'application/json');
@@ -77,6 +78,7 @@ export default async function handler(req, res) {
 
     const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : (req.body || {});
     const messages = Array.isArray(body.messages) ? body.messages : [];
+    const profileId = String(body.profileId || '').trim() || null;
     const topic = body.topic || null;
     const domain = body.domain || null;
     const adaptiveBrief = String(body.adaptiveBrief || '').trim();
@@ -131,6 +133,12 @@ export default async function handler(req, res) {
       try {
         const finalText = await s.finalText();
         latest = normalizeAssistantText(finalText || latest);
+        try {
+          const finalMsg = await s.finalMessage();
+          if (finalMsg?.usage) {
+            void logTokenUsage({ profileId, endpoint: 'topic-ai', model: reqConfig.model, usage: finalMsg.usage });
+          }
+        } catch {}
         res.write(`${JSON.stringify({ type: 'done', text: latest })}\n`);
         res.end();
         return;
@@ -143,6 +151,9 @@ export default async function handler(req, res) {
     }
 
     const response = await client.messages.create(reqConfig);
+    if (response?.usage) {
+      void logTokenUsage({ profileId, endpoint: 'topic-ai', model: reqConfig.model, usage: response.usage });
+    }
 
     const textRaw = response.content
       .filter((b) => b.type === 'text')

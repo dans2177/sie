@@ -1,4 +1,5 @@
 import Anthropic, { APIError } from '@anthropic-ai/sdk';
+import { logTokenUsage } from './_db.js';
 
 function send(res, code, payload) {
   res.status(code).setHeader('Content-Type', 'application/json');
@@ -88,6 +89,7 @@ export default async function handler(req, res) {
     const requireCoverage = Boolean(body.requireCoverage);
     const recentPrompts = Array.isArray(body.recentPrompts) ? body.recentPrompts.map(String) : [];
     const batchSize = Math.min(Math.max(Number(body.batchSize) || 6, 1), 14);
+    const profileId = String(body.profileId || '').trim() || null;
 
     if (!formulas.length) {
       return send(res, 400, { ok: false, error: 'Missing formulas' });
@@ -183,6 +185,9 @@ export default async function handler(req, res) {
       try {
         const response = await client.messages.create(reqConfig);
         clearInterval(heartbeat);
+        if (response?.usage) {
+          void logTokenUsage({ profileId, endpoint: 'math-drills', model: reqConfig.model, usage: response.usage });
+        }
         const toolUse = response.content.find((b) => b.type === 'tool_use');
         const questions = Array.isArray(toolUse?.input?.questions) ? toolUse.input.questions : [];
         let count = 0;
@@ -203,6 +208,9 @@ export default async function handler(req, res) {
     }
 
     const response = await client.messages.create(reqConfig);
+    if (response?.usage) {
+      void logTokenUsage({ profileId, endpoint: 'math-drills', model: reqConfig.model, usage: response.usage });
+    }
     const toolUse = response.content.find((b) => b.type === 'tool_use');
     const questions = Array.isArray(toolUse?.input?.questions) ? toolUse.input.questions : [];
     return send(res, 200, { ok: true, questions });
