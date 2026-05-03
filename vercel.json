@@ -1,5 +1,6 @@
 {
   "buildCommand": "npm run build",
+  "framework": "vite",
   "outputDirectory": "dist",
   "regions": ["iad1"]
 }
