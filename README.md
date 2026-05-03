@@ -154,8 +154,10 @@ vercel
 
 ### Environment Setup on Vercel
 1. Go to Project Settings → Environment Variables
-2. Add `VITE_ANTHROPIC_API_KEY` with your Claude API key
-3. Redeploy
+2. Add `ANTHROPIC_API_KEY` with your Claude API key
+3. Add `VITE_ANTHROPIC_API_KEY` with the same value (allowed and supported)
+4. Set `VITE_ENABLE_BROWSER_AI_FALLBACK=false` for server-only AI in production
+5. Redeploy
 
 ### Data Persistence with Vercel Blob
 - Quiz results, notes, and progress auto-sync to Vercel Blob

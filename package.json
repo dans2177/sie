@@ -4,10 +4,14 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "start": "npx vercel dev --local --yes",
     "dev": "vite",
+    "dev:web": "vite --host 127.0.0.1 --port 5173",
+    "dev:api": "npx vercel dev --local --yes --listen 127.0.0.1:3001",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "db:init": "node --env-file=.env.local scripts/init-db.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.90.0",
@@ -17,6 +21,7 @@
     "framer-motion": "^12.38.0",
     "katex": "^0.16.45",
     "postcss": "^8.5.10",
+    "postgres": "^3.4.9",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "react-katex": "^3.1.0",
@@ -30,6 +35,7 @@
     "@types/node": "^24.12.2",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
+    "@types/react-katex": "^3.0.4",
     "@vitejs/plugin-react": "^6.0.1",
     "eslint": "^9.39.4",
     "eslint-plugin-react-hooks": "^7.0.1",
