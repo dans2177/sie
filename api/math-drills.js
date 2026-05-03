@@ -100,6 +100,49 @@ export default async function handler(req, res) {
 
     const client = new Anthropic({ apiKey });
     const randomSeed = `${Date.now().toString(36)}-${Math.floor(Math.random() * 1e9).toString(36)}`;
+
+    const blankSchema = {
+      type: 'object',
+      properties: {
+        label: { type: 'string' },
+        numericAnswer: { type: 'number' },
+        tolerance: { type: 'number' },
+        acceptableAnswers: { type: 'array', items: { type: 'string' } },
+      },
+      required: ['label', 'numericAnswer', 'tolerance', 'acceptableAnswers'],
+    };
+    const questionSchema = {
+      type: 'object',
+      properties: {
+        id: { type: 'string' },
+        formulaId: { type: 'string' },
+        formulaTitle: { type: 'string' },
+        difficulty: { type: 'string', enum: ['easy', 'medium', 'hard'] },
+        prompt: { type: 'string' },
+        template: { type: 'string' },
+        blanks: { type: 'array', items: blankSchema, minItems: 1, maxItems: 4 },
+        hint: { type: 'string' },
+        answerFormat: { type: 'string' },
+        canonicalAnswer: { type: 'string' },
+        acceptableAnswers: { type: 'array', items: { type: 'string' } },
+        numericAnswer: { type: 'number' },
+        tolerance: { type: 'number' },
+        unit: { type: 'string', enum: ['plain', 'percent', 'dollars', 'ratio'] },
+        explanation: { type: 'string' },
+        steps: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 4 },
+      },
+      required: ['id', 'formulaId', 'formulaTitle', 'difficulty', 'prompt', 'blanks', 'canonicalAnswer', 'unit', 'explanation', 'steps'],
+    };
+    const submitTool = {
+      name: 'submit_questions',
+      description: 'Submit the generated SIE math drill question(s).',
+      input_schema: {
+        type: 'object',
+        properties: { questions: { type: 'array', items: questionSchema, minItems: 1 } },
+        required: ['questions'],
+      },
+    };
+
     const reqConfig = {
       model: 'claude-sonnet-4-6',
       max_tokens: 1400,
@@ -107,14 +150,16 @@ export default async function handler(req, res) {
       system: [
         {
           type: 'text',
-          text: 'You produce strict JSON for educational math practice content.',
+          text: 'You produce strict structured output via the submit_questions tool for SIE math practice content.',
           cache_control: { type: 'ephemeral' },
         },
       ],
+      tools: [submitTool],
+      tool_choice: { type: 'tool', name: 'submit_questions' },
       messages: [
         {
           role: 'user',
-          content: buildPrompt({ formulas, focusFormulaIds, weakFormulaIds, existingQuestionIds, batchSize, requireCoverage }),
+          content: buildPrompt({ formulas, focusFormulaIds, weakFormulaIds, existingQuestionIds, batchSize, requireCoverage, recentPrompts, randomSeed }),
         },
       ],
     };
@@ -129,77 +174,23 @@ export default async function handler(req, res) {
       if (typeof res.flushHeaders === 'function') {
         try { res.flushHeaders(); } catch {}
       }
-      // Defeat client/proxy initial buffering with a padded comment-style line.
       res.write(`${JSON.stringify({ type: 'start', total: batchSize, padding: ' '.repeat(2048) })}\n`);
 
-      const s = client.messages.stream(reqConfig);
-      let latest = '';
-      let lastEmittedCount = 0;
       const heartbeat = setInterval(() => {
-        try { res.write(`${JSON.stringify({ type: 'heartbeat', count: lastEmittedCount, total: batchSize })}\n`); } catch {}
+        try { res.write(`${JSON.stringify({ type: 'heartbeat', count: 0, total: batchSize })}\n`); } catch {}
       }, 2000);
 
-      // Try to extract the next complete top-level object from `latest` after offset.
-      const tryExtractNext = (offset) => {
-        const text = latest;
-        const start = text.indexOf('{', offset);
-        if (start === -1) return null;
-        let depth = 0;
-        let inStr = false;
-        let escape = false;
-        for (let i = start; i < text.length; i += 1) {
-          const ch = text[i];
-          if (escape) { escape = false; continue; }
-          if (ch === '\\') { escape = true; continue; }
-          if (ch === '"') { inStr = !inStr; continue; }
-          if (inStr) continue;
-          if (ch === '{') depth += 1;
-          else if (ch === '}') {
-            depth -= 1;
-            if (depth === 0) {
-              const slice = text.slice(start, i + 1);
-              try {
-                const parsed = JSON.parse(slice);
-                return { question: parsed, end: i + 1 };
-              } catch {
-                return null;
-              }
-            }
-          }
-        }
-        return null;
-      };
-
-      let cursor = 0;
-      s.on('text', (textDelta, textSnapshot) => {
-        latest = textSnapshot || `${latest}${textDelta || ''}`;
-        // Live raw text so client can show streaming progress like chat.
-        if (textDelta) {
-          res.write(`${JSON.stringify({ type: 'delta', delta: textDelta, snapshot: latest })}\n`);
-        }
-        // Emit newly completed objects.
-        while (true) {
-          const next = tryExtractNext(cursor);
-          if (!next) break;
-          cursor = next.end;
-          lastEmittedCount += 1;
-          res.write(`${JSON.stringify({ type: 'question', question: next.question, count: lastEmittedCount, total: batchSize })}\n`);
-        }
-        res.write(`${JSON.stringify({ type: 'progress', count: lastEmittedCount, total: batchSize })}\n`);
-      });
-
       try {
-        await s.finalText();
-        // Final pass to flush anything remaining (e.g. last object before closing bracket).
-        while (true) {
-          const next = tryExtractNext(cursor);
-          if (!next) break;
-          cursor = next.end;
-          lastEmittedCount += 1;
-          res.write(`${JSON.stringify({ type: 'question', question: next.question, count: lastEmittedCount, total: batchSize })}\n`);
-        }
+        const response = await client.messages.create(reqConfig);
         clearInterval(heartbeat);
-        res.write(`${JSON.stringify({ type: 'done', count: lastEmittedCount, total: batchSize })}\n`);
+        const toolUse = response.content.find((b) => b.type === 'tool_use');
+        const questions = Array.isArray(toolUse?.input?.questions) ? toolUse.input.questions : [];
+        let count = 0;
+        for (const q of questions) {
+          count += 1;
+          res.write(`${JSON.stringify({ type: 'question', question: q, count, total: batchSize })}\n`);
+        }
+        res.write(`${JSON.stringify({ type: 'done', count, total: batchSize })}\n`);
         res.end();
         return;
       } catch (error) {
@@ -212,14 +203,8 @@ export default async function handler(req, res) {
     }
 
     const response = await client.messages.create(reqConfig);
-
-    const text = response.content
-      .filter((block) => block.type === 'text')
-      .map((block) => (block.type === 'text' ? block.text : ''))
-      .join('\n')
-      .trim();
-
-    const questions = extractJsonArray(text);
+    const toolUse = response.content.find((b) => b.type === 'tool_use');
+    const questions = Array.isArray(toolUse?.input?.questions) ? toolUse.input.questions : [];
     return send(res, 200, { ok: true, questions });
   } catch (error) {
     const info = classifyAnthropicError(error);

@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { C } from '../data/colors';
-import { extractMcqOptions, parseAssistantOutcome, renderChatContent } from '../lib/chatHelpers';
+import { extractMcqOptions, parseAssistantOutcome } from '../lib/chatHelpers';
+import { MarkdownView } from './MarkdownView';
 import type { ChatMessage, McqOption, SelectedTopic } from '../types/index';
 
 export default function ChatView({
@@ -35,6 +36,24 @@ export default function ChatView({
   onDismissError?: () => void;
 }) {
   const chatRef = useRef<HTMLDivElement>(null);
+  const taRef = useRef<HTMLTextAreaElement>(null);
+  const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
+
+  const tokenEstimate = useMemo(() => {
+    let total = 0;
+    for (const m of msgs) total += Math.ceil((m.content?.length || 0) / 4);
+    return total;
+  }, [msgs]);
+  const tokenLimit = 200_000;
+  const tokenPct = Math.min(100, Math.round((tokenEstimate / tokenLimit) * 100));
+
+  // Auto-grow textarea up to ~6 rows.
+  useEffect(() => {
+    const el = taRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, 168)}px`;
+  }, [inp]);
   const answerSummary = useMemo(() => {
     const assistant = msgs.filter((m, i) => m.role === 'assistant' && i > 0);
     let correct = 0;
@@ -226,6 +245,7 @@ export default function ChatView({
                 )}
                 <div
                   style={{
+                    position: 'relative',
                     maxWidth: '92%',
                     padding: '10px 14px',
                     borderRadius: msg.role === 'user' ? '12px 12px 2px 12px' : '12px 12px 12px 2px',
@@ -234,11 +254,40 @@ export default function ChatView({
                     color: msg.role === 'user' ? C.text : C.muted,
                     fontSize: '16px',
                     lineHeight: 1.8,
-                    whiteSpace: 'pre-wrap',
                     wordBreak: 'break-word',
                   }}
                 >
-                  {renderChatContent(msg.content)}
+                  {msg.role === 'user' ? (
+                    <span style={{ whiteSpace: 'pre-wrap' }}>{msg.content}</span>
+                  ) : (
+                    <>
+                      <MarkdownView
+                        text={msg.content}
+                        streaming={loading && i === msgs.length - 2 /* assistant placeholder while streaming */}
+                      />
+                      {msg.content && (
+                        <button
+                          onClick={() => {
+                            const raw = msg.content.replace(/^\[OUTCOME:[A-Z_]+\]\s*/i, '');
+                            void navigator.clipboard.writeText(raw);
+                            setCopiedIdx(i);
+                            window.setTimeout(() => setCopiedIdx((cur) => (cur === i ? null : cur)), 1200);
+                          }}
+                          title="Copy raw text"
+                          style={{
+                            position: 'absolute', top: 4, right: 4,
+                            padding: '2px 8px', fontSize: '11px',
+                            background: C.panel, border: `1px solid ${C.border}`,
+                            color: copiedIdx === i ? C.amber : C.dim,
+                            borderRadius: '6px', cursor: 'pointer', fontFamily: 'inherit',
+                            opacity: 0.85,
+                          }}
+                        >
+                          {copiedIdx === i ? 'Copied' : 'Copy'}
+                        </button>
+                      )}
+                    </>
+                  )}
                 </div>
               </div>
               {msg.role === 'assistant' && (() => {
@@ -346,6 +395,7 @@ export default function ChatView({
         }}
       >
         <textarea
+          ref={taRef}
           value={inp}
           onChange={(e) => onInpChange(e.target.value)}
           onKeyDown={(e) => {
@@ -368,6 +418,8 @@ export default function ChatView({
             outline: 'none',
             fontFamily: 'inherit',
             lineHeight: 1.7,
+            maxHeight: '168px',
+            overflowY: 'auto',
           }}
         />
         <button
@@ -385,10 +437,24 @@ export default function ChatView({
             fontWeight: 'bold',
             letterSpacing: '0.05em',
             flexShrink: 0,
+            display: 'inline-flex', alignItems: 'center', gap: '6px',
           }}
         >
+          {loading && (
+            <span style={{ width: '10px', height: '10px', borderRadius: '50%', background: '#ffffff', display: 'inline-block', animation: 'pulse 1.2s infinite' }} />
+          )}
           SEND
         </button>
+      </div>
+      <div style={{
+        padding: '4px 16px 8px', background: C.panel, borderTop: `1px solid ${C.border}`,
+        fontSize: '11px', color: C.dim, display: 'flex', alignItems: 'center', gap: '8px',
+      }}>
+        <span>Context: {tokenEstimate.toLocaleString()} / {tokenLimit.toLocaleString()} tokens</span>
+        <div style={{ flex: 1, height: '4px', background: C.card, borderRadius: '2px', overflow: 'hidden' }}>
+          <div style={{ width: `${tokenPct}%`, height: '100%', background: tokenPct > 80 ? '#dc2626' : tokenPct > 50 ? C.amber : C.d3 }} />
+        </div>
+        <span>{tokenPct}%</span>
       </div>
     </div>
   );

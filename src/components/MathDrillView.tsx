@@ -13,8 +13,8 @@ import {
   upsertMathDrillQuestions,
 } from '../lib/mathDrills';
 import { loadMathDrillsRemote, saveMathDrillsRemote } from '../lib/server';
-import { renderChatContent } from '../lib/chatHelpers';
 import { friendlyChatError } from '../lib/chatHelpers';
+import { MarkdownView } from './MarkdownView';
 import type { MathDrillCard, MathDrillSummary } from '../types/index';
 
 type Props = {
@@ -590,7 +590,7 @@ function renderTurn(turn: Turn, idx: number, handlers: RenderHandlers) {
     return (
       <div key={idx} style={{ display: 'flex', justifyContent: 'flex-start' }}>
         <div style={{ ...bubble(false), whiteSpace: 'normal' }}>
-          {turn.text ? renderChatContent(turn.text) : '…'}
+          {turn.text ? <MarkdownView text={turn.text} streaming={!turn.text.trim()} /> : '…'}
         </div>
       </div>
     );
@@ -621,7 +621,7 @@ function renderTurn(turn: Turn, idx: number, handlers: RenderHandlers) {
             )}
           </div>
           <div style={{ fontSize: '14px', lineHeight: 1.7, color: C.text, whiteSpace: 'normal' }}>
-            {turn.aiText ? renderChatContent(turn.aiText) : (turn.streaming ? '…' : '')}
+            {turn.aiText ? <MarkdownView text={turn.aiText} streaming={turn.streaming} /> : (turn.streaming ? '…' : '')}
           </div>
           {ok && !turn.streaming && (
             <button onClick={handlers.onNext} disabled={!handlers.canRequestNext} style={{

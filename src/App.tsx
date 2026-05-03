@@ -528,7 +528,7 @@ export default function App() {
         fontSize: '16px',
       }}
     >
-      <style>{`@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.3}}*{box-sizing:border-box}::-webkit-scrollbar{width:4px}::-webkit-scrollbar-track{background:${C.bg}}::-webkit-scrollbar-thumb{background:${C.border};border-radius:2px}html,body{overscroll-behavior-y:contain}`}</style>
+      <style>{`@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.3}}@keyframes blink{0%,50%{opacity:1}50.01%,100%{opacity:0}}*{box-sizing:border-box}::-webkit-scrollbar{width:4px}::-webkit-scrollbar-track{background:${C.bg}}::-webkit-scrollbar-thumb{background:${C.border};border-radius:2px}html,body{overscroll-behavior-y:contain}.md p:first-child{margin-top:0}.md p:last-child{margin-bottom:0}.md-caret{display:inline-block;animation:blink 1s steps(1) infinite;color:${C.amber};margin-left:2px;font-weight:700}.md pre code{background:transparent;border:none;padding:0}.md code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}`}</style>
       <AppHeader
         pct={pct}
         profileLabel={profileLabel}
