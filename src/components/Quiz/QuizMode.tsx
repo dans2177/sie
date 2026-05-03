@@ -228,6 +228,7 @@ export function QuizMode({ onBackToStudy }: QuizModeProps) {
   }
 
   if (stage === 'results') {
+    if (!results) return null;
     return (
       <div className="flex-1 bg-gradient-to-br from-blue-50 to-indigo-100 dark:from-slate-900 dark:to-slate-800 p-6 overflow-y-auto">
         <div className="max-w-2xl mx-auto">
