@@ -1,12 +1,5 @@
 {
   "buildCommand": "npm run build",
-  "framework": "vite",
   "outputDirectory": "dist",
-  "env": {
-    "ANTHROPIC_API_KEY": {
-      "description": "Anthropic API key for Claude (server-side only, never exposed to browser)",
-      "required": true
-    }
-  },
   "regions": ["iad1"]
 }
