@@ -32,7 +32,7 @@ function extractJsonArray(text) {
   return JSON.parse(candidate.slice(start, end + 1));
 }
 
-function buildPrompt({ formulas, focusFormulaIds, weakFormulaIds, existingQuestionIds, batchSize, requireCoverage }) {
+function buildPrompt({ formulas, focusFormulaIds, weakFormulaIds, existingQuestionIds, batchSize, requireCoverage, recentPrompts, randomSeed }) {
   const focusText = focusFormulaIds.length
     ? `STRICT: Every question MUST use formulaId = "${focusFormulaIds[0]}". Do not use any other formula.`
     : 'Distribute questions across the formulas provided.';
@@ -42,8 +42,13 @@ function buildPrompt({ formulas, focusFormulaIds, weakFormulaIds, existingQuesti
   const coverageText = requireCoverage
     ? 'Coverage requirement: produce AT LEAST ONE question for every formula listed below. Do not skip any formulaId.'
     : 'Coverage: balanced across listed formulas.';
+  const recentText = Array.isArray(recentPrompts) && recentPrompts.length
+    ? `RECENT PROMPTS YOU JUST WROTE (DO NOT REPEAT THESE NUMBERS OR SCENARIOS — pick fresh figures, different magnitudes, different industries/issuers):\n${recentPrompts.slice(-8).map((p, i) => `  ${i + 1}. ${String(p).slice(0, 220)}`).join('\n')}`
+    : 'No prior prompts to avoid.';
 
   return `You create SIE exam math drills for fill-in-the-blank repetition.
+
+Randomization seed: ${randomSeed} — use this to pick fresh, varied numbers (different orders of magnitude, different round vs non-round figures). Never default to textbook examples.
 
 OUTPUT: ONLY a JSON array of ${batchSize} object(s). No prose, no markdown.
 
@@ -56,11 +61,14 @@ Rules:
 - unit ∈ plain|percent|dollars|ratio. difficulty ∈ easy|medium|hard.
 - formulaId must match a provided formula.
 - id must NOT reuse any of: ${existingQuestionIds.slice(-30).join(', ') || 'none'}.
+- Numbers MUST be different from any recent prompt below — vary the magnitude AND the scenario (different company size, fund type, bond coupon, strike, etc.).
 - Keep explanation/steps SHORT (1 sentence + 2 steps).
 
 ${focusText}
 ${weakText}
 ${coverageText}
+
+${recentText}
 
 Formulas:
 ${JSON.stringify(formulas.map((f) => ({ id: f.id, title: f.title, formula: f.formula })))}`;
@@ -78,6 +86,7 @@ export default async function handler(req, res) {
     const weakFormulaIds = Array.isArray(body.weakFormulaIds) ? body.weakFormulaIds : [];
     const existingQuestionIds = Array.isArray(body.existingQuestionIds) ? body.existingQuestionIds : [];
     const requireCoverage = Boolean(body.requireCoverage);
+    const recentPrompts = Array.isArray(body.recentPrompts) ? body.recentPrompts.map(String) : [];
     const batchSize = Math.min(Math.max(Number(body.batchSize) || 6, 1), 14);
 
     if (!formulas.length) {
@@ -90,10 +99,11 @@ export default async function handler(req, res) {
     }
 
     const client = new Anthropic({ apiKey });
+    const randomSeed = `${Date.now().toString(36)}-${Math.floor(Math.random() * 1e9).toString(36)}`;
     const reqConfig = {
       model: 'claude-sonnet-4-6',
       max_tokens: 1400,
-      temperature: 0.9,
+      temperature: 1.0,
       system: [
         {
           type: 'text',

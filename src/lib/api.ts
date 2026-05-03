@@ -118,6 +118,7 @@ export async function generateMathDrills({
   focusFormulaIds,
   weakFormulaIds,
   existingQuestionIds,
+  recentPrompts,
   batchSize,
   requireCoverage,
   onQuestion,
@@ -128,6 +129,7 @@ export async function generateMathDrills({
   focusFormulaIds: string[];
   weakFormulaIds: string[];
   existingQuestionIds: string[];
+  recentPrompts?: string[];
   batchSize: number;
   requireCoverage?: boolean;
   onQuestion?: (question: MathDrillQuestion, count: number, total: number) => void;
@@ -141,7 +143,7 @@ export async function generateMathDrills({
     const res = await fetch('/api/math-drills', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ formulas, focusFormulaIds, weakFormulaIds, existingQuestionIds, batchSize, requireCoverage: Boolean(requireCoverage), stream: true }),
+      body: JSON.stringify({ formulas, focusFormulaIds, weakFormulaIds, existingQuestionIds, recentPrompts: recentPrompts || [], batchSize, requireCoverage: Boolean(requireCoverage), stream: true }),
       signal: controller.signal,
     });
 

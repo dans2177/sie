@@ -189,6 +189,13 @@ export default function MathDrillView({ profileId, onLog, onBack, onOpenFormulaS
         focusFormulaIds: targetFormulaId ? [targetFormulaId] : [],
         weakFormulaIds: getWeakMathFormulaIds(profileId, 3),
         existingQuestionIds: [...cards.map((card) => card.id), ...askedIds],
+        recentPrompts: (targetFormulaId
+          ? cards.filter((c) => c.formulaId === targetFormulaId)
+          : cards
+        )
+          .slice(-8)
+          .map((c) => c.prompt)
+          .filter(Boolean),
         batchSize: 1,
         onDelta: (snapshot) => {
           // Extract the prompt-in-progress so the loading bubble shows live activity.
