@@ -4,13 +4,13 @@ import { ChatPanel } from '../Chat/ChatPanel';
 import { ResourcesPanel } from '../Resources/ResourcesPanel';
 import { QuizMode } from '../Quiz/QuizMode';
 import { sendMessageToClaudeStream } from '../../lib/api/claudeClient';
-import type { ChatMessage } from '../../types/index';
+import type { ChatMessage, ExamCategory } from '../../types/index';
 
 export function MainLayout() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedCategory] = useState<any>('all');
+  const [selectedCategory, setSelectedCategory] = useState<ExamCategory | 'all'>('all');
   const [mode, setMode] = useState<'study' | 'quiz'>('study');
   const [darkMode, setDarkMode] = useState(() =>
     localStorage.getItem('darkMode') === 'true',
@@ -26,52 +26,46 @@ export function MainLayout() {
   }, [darkMode]);
 
   const handleSendMessage = async (message: string) => {
-    const newMessage: ChatMessage = {
+    const userMessage: ChatMessage = {
       id: Math.random().toString(36),
       role: 'user',
       content: message,
       timestamp: Date.now(),
     };
-    setMessages((prev) => [...prev, newMessage]);
+
+    const assistantId = Math.random().toString(36);
+    const assistantMessage: ChatMessage = {
+      id: assistantId,
+      role: 'assistant',
+      content: '',
+      timestamp: Date.now(),
+    };
+
+    setMessages((prev) => [...prev, userMessage, assistantMessage]);
     setIsLoading(true);
 
-    let fullResponse = '';
-
     try {
-      await sendMessageToClaudeStream(message, [...messages, newMessage], (chunk) => {
-        fullResponse += chunk;
-        setMessages((prev) => {
-          const updated = [...prev];
-          const lastMsg = updated[updated.length - 1];
-          if (lastMsg.role === 'assistant') {
-            lastMsg.content = fullResponse;
-          }
-          return updated;
-        });
-      });
-
-      if (!messages.some((m) => m.role === 'assistant' && m.content === fullResponse)) {
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: Math.random().toString(36),
-            role: 'assistant',
-            content: fullResponse,
-            timestamp: Date.now(),
-          },
-        ]);
-      }
+      await sendMessageToClaudeStream(
+        message,
+        // pass history without the empty assistant placeholder
+        [...messages, userMessage],
+        (chunk) => {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === assistantId ? { ...m, content: m.content + chunk } : m,
+            ),
+          );
+        },
+      );
     } catch (error) {
       console.error('Chat error:', error);
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: Math.random().toString(36),
-          role: 'assistant',
-          content: '❌ Error: Could not connect to AI. Check your API key in .env',
-          timestamp: Date.now(),
-        },
-      ]);
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === assistantId
+            ? { ...m, content: '❌ Error: Could not connect to AI. Check your API key.' }
+            : m,
+        ),
+      );
     } finally {
       setIsLoading(false);
     }
@@ -79,7 +73,7 @@ export function MainLayout() {
 
   return (
     <div className={`flex flex-col h-screen ${darkMode ? 'dark' : ''}`}>
-      {/* Premium Header */}
+      {/* Header */}
       <header className="bg-gradient-to-r from-blue-600 via-blue-700 to-indigo-800 text-white px-8 py-6 shadow-2xl">
         <div className="max-w-7xl mx-auto flex justify-between items-start">
           <div>
@@ -109,11 +103,9 @@ export function MainLayout() {
         </div>
       </header>
 
-      {/* Mode Switcher */}
       {mode === 'quiz' ? (
         <QuizMode onBackToStudy={() => setMode('study')} />
       ) : (
-        /* Main Grid: 3 Columns */
         <div className="flex-1 overflow-hidden grid grid-cols-3 gap-4 p-6 bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-800">
           {/* LEFT COLUMN: Cheatsheet */}
           <div className="bg-white dark:bg-slate-800 rounded-xl shadow-lg overflow-hidden flex flex-col border border-slate-200 dark:border-slate-700">
@@ -129,7 +121,11 @@ export function MainLayout() {
                 className="mt-3 w-full px-3 py-2 border border-emerald-300 dark:border-emerald-600 rounded-lg text-sm dark:bg-slate-700 dark:text-white focus:ring-2 focus:ring-emerald-500 outline-none"
               />
             </div>
-            <CheatsheetPanel searchQuery={searchQuery} selectedCategory={selectedCategory} />
+            <CheatsheetPanel
+              searchQuery={searchQuery}
+              selectedCategory={selectedCategory}
+              onCategoryChange={setSelectedCategory}
+            />
           </div>
 
           {/* CENTER COLUMN: Chat Interface */}

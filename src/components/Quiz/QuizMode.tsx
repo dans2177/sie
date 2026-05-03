@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { generateQuizQuestions, scoringQuiz } from '../../lib/api/quizGenerator';
 import { addQuizResult } from '../../lib/storage/blobStorage';
-import type { QuizQuestion } from '../../lib/api/quizGenerator';
+import type { QuizQuestion, QuizResult } from '../../lib/api/quizGenerator';
 
 interface QuizModeProps {
   onBackToStudy: () => void;
@@ -14,7 +14,7 @@ export function QuizMode({ onBackToStudy }: QuizModeProps) {
   const [questions, setQuestions] = useState<QuizQuestion[]>([]);
   const [answers, setAnswers] = useState<number[]>([]);
   const [currentQuestion, setCurrentQuestion] = useState(0);
-  const [results, setResults] = useState<any>(null);
+  const [results, setResults] = useState<QuizResult | null>(null);
   const [error, setError] = useState('');
 
   const topics = [
@@ -64,7 +64,7 @@ export function QuizMode({ onBackToStudy }: QuizModeProps) {
   };
 
   const finishQuiz = async () => {
-    const scoring = await scoringQuiz(questions, answers);
+    const scoring = scoringQuiz(questions, answers);
     setResults(scoring);
 
     // Save results to Vercel Blob
@@ -264,7 +264,7 @@ export function QuizMode({ onBackToStudy }: QuizModeProps) {
               <div className="mb-8">
                 <h3 className="font-bold text-slate-900 dark:text-white mb-4">Review Mistakes</h3>
                 <div className="space-y-4 max-h-64 overflow-y-auto">
-                  {results.mistakes.map((m: any, i: number) => (
+                  {results.mistakes.map((m, i) => (
                     <div key={i} className="bg-red-50 dark:bg-red-900 p-4 rounded-lg border border-red-200 dark:border-red-800">
                       <p className="font-semibold text-slate-900 dark:text-white mb-2">{m.question.question}</p>
                       <p className="text-sm text-slate-700 dark:text-slate-300 mb-3">📝 {m.question.explanation}</p>

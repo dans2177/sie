@@ -1,10 +1,10 @@
 {
   "buildCommand": "npm run build",
-  "framework": "react",
+  "framework": "vite",
   "outputDirectory": "dist",
   "env": {
-    "VITE_ANTHROPIC_API_KEY": {
-      "description": "Your Anthropic API key for Claude",
+    "ANTHROPIC_API_KEY": {
+      "description": "Anthropic API key for Claude (server-side only, never exposed to browser)",
       "required": true
     }
   },

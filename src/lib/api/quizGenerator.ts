@@ -1,6 +1,3 @@
-import { sendMessage } from './claudeClient';
-import type { ChatMessage } from '../../types/index';
-
 export interface QuizQuestion {
   id: string;
   question: string;
@@ -11,43 +8,28 @@ export interface QuizQuestion {
   difficulty: 'basic' | 'intermediate' | 'advanced';
 }
 
+export interface QuizResult {
+  score: number;
+  total: number;
+  percentage: number;
+  mistakes: Array<{ question: QuizQuestion; userAnswer: number }>;
+}
+
 export async function generateQuizQuestions(
   topic: string,
   difficulty: 'basic' | 'intermediate' | 'advanced',
   count: number = 5,
 ): Promise<QuizQuestion[]> {
-  const prompt = `Generate ${count} multiple-choice SIE exam questions about "${topic}" at ${difficulty} difficulty level.
-
-Format as JSON array with this structure:
-[
-  {
-    "id": "unique-id",
-    "question": "Question text?",
-    "options": ["A", "B", "C", "D"],
-    "correctAnswer": 0,
-    "explanation": "Why this is correct and why others are wrong",
-    "topic": "${topic}",
-    "difficulty": "${difficulty}"
-  }
-]
-
-Make questions realistic for the SIE exam. Include math calculations when relevant.`;
-
-  const messages: ChatMessage[] = [
-    {
-      id: '0',
-      role: 'user',
-      content: prompt,
-      timestamp: Date.now(),
-    },
-  ];
-
   try {
-    const response = await sendMessage(prompt, messages);
-    const jsonMatch = response.response.match(/\[[\s\S]*\]/);
-    if (!jsonMatch) throw new Error('No JSON found in response');
+    const response = await fetch('/api/quiz', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ topic, difficulty, count }),
+    });
 
-    const questions = JSON.parse(jsonMatch[0]) as QuizQuestion[];
+    if (!response.ok) throw new Error(`Quiz API error: ${response.status}`);
+
+    const questions = (await response.json()) as QuizQuestion[];
     return questions;
   } catch (error) {
     console.error('Failed to generate quiz questions:', error);
@@ -76,24 +58,16 @@ function generateFallbackQuestions(
       correctAnswer: 1,
       explanation: `This tests your understanding of ${topic}. The correct answer is B because...`,
       topic,
-      difficulty: difficulty as any,
+      difficulty: difficulty as QuizQuestion['difficulty'],
     });
   }
 
   return questions;
 }
 
-export async function scoringQuiz(
-  questions: QuizQuestion[],
-  answers: number[],
-): Promise<{
-  score: number;
-  total: number;
-  percentage: number;
-  mistakes: Array<{ question: QuizQuestion; userAnswer: number }>;
-}> {
+export function scoringQuiz(questions: QuizQuestion[], answers: number[]): QuizResult {
   let correct = 0;
-  const mistakes = [];
+  const mistakes: QuizResult['mistakes'] = [];
 
   for (let i = 0; i < questions.length; i++) {
     if (answers[i] === questions[i].correctAnswer) {
