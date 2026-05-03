@@ -41,15 +41,16 @@ export async function sendMessageToClaudeStream(
     buffer = lines.pop() ?? '';
 
     for (const line of lines) {
-      if (!line.startsWith('data: ')) continue;
-      const data = line.slice(6).trim();
-      if (data === '[DONE]') return { fullResponse };
+      if (!line.trim()) continue;
       try {
-        const parsed = JSON.parse(data);
-        if (parsed.error) throw new Error(parsed.error);
-        if (typeof parsed.text === 'string') {
-          fullResponse += parsed.text;
-          onChunk(parsed.text);
+        const parsed = JSON.parse(line) as { type: string; delta?: string; text?: string; error?: string };
+        if (parsed.type === 'error') throw new Error(parsed.error);
+        if (parsed.type === 'delta' && parsed.delta) {
+          fullResponse += parsed.delta;
+          onChunk(parsed.delta);
+        }
+        if (parsed.type === 'done' && parsed.text) {
+          fullResponse = parsed.text;
         }
       } catch (err) {
         if (err instanceof SyntaxError) continue;
