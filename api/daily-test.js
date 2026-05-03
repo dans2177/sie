@@ -55,7 +55,7 @@ export default async function handler(req, res) {
 
       await sql`
         insert into daily_tests (profile_id, test_date, score, total, payload, weak_topics)
-        values (${profileId}, ${date}, ${score}, ${total}, ${JSON.stringify(payload)}::jsonb, ${JSON.stringify(weakTopicIds)}::jsonb)
+        values (${profileId}, ${date}, ${score}, ${total}, ${sql.json(payload)}, ${sql.json(weakTopicIds)})
         on conflict (profile_id, test_date)
         do update set
           score = excluded.score,

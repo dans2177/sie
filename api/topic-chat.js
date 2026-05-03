@@ -27,8 +27,21 @@ export default async function handler(req, res) {
         limit 1
       `;
 
-      const messages = rows[0]?.messages;
-      return send(res, 200, { ok: true, messages: Array.isArray(messages) ? messages : [] });
+      const raw = rows[0]?.messages;
+      // Tolerate legacy rows where messages was stored as a JSON-encoded string
+      // (or even double-encoded). Unwrap until we find an array, then heal the row.
+      let messages = raw;
+      let healed = false;
+      for (let i = 0; i < 3 && typeof messages === 'string'; i += 1) {
+        try { messages = JSON.parse(messages); healed = true; } catch { break; }
+      }
+      if (!Array.isArray(messages)) messages = [];
+      if (healed && messages.length > 0) {
+        try {
+          await sql`update topic_chats set messages = ${sql.json(messages)}, updated_at = now() where profile_id = ${profileId} and topic_id = ${topicId}`;
+        } catch { /* best-effort */ }
+      }
+      return send(res, 200, { ok: true, messages });
     }
 
     if (req.method === 'POST') {
@@ -43,7 +56,7 @@ export default async function handler(req, res) {
 
       await sql`
         insert into topic_chats (profile_id, topic_id, messages)
-        values (${profileId}, ${topicId}, ${JSON.stringify(messages)}::jsonb)
+        values (${profileId}, ${topicId}, ${sql.json(messages)})
         on conflict (profile_id, topic_id)
         do update set
           messages = excluded.messages,
