@@ -16,6 +16,8 @@ export default function ChatView({
   spRate,
   onSpRateChange,
   voiceName,
+  error,
+  onDismissError,
 }: {
   sel: SelectedTopic | null;
   msgs: ChatMessage[];
@@ -29,6 +31,8 @@ export default function ChatView({
   spRate: number;
   onSpRateChange: (r: number) => void;
   voiceName: string | null;
+  error?: string | null;
+  onDismissError?: () => void;
 }) {
   const chatRef = useRef<HTMLDivElement>(null);
   const answerSummary = useMemo(() => {
@@ -307,6 +311,26 @@ export default function ChatView({
               </span>{' '}
               thinking...
             </div>
+          </div>
+        )}
+        {error && (
+          <div
+            onClick={onDismissError}
+            title="Click to dismiss"
+            style={{
+              alignSelf: 'center',
+              padding: '8px 12px',
+              borderRadius: '8px',
+              background: '#fef2f2',
+              border: '1px solid #fecaca',
+              color: '#991b1b',
+              fontSize: '12px',
+              cursor: onDismissError ? 'pointer' : 'default',
+              maxWidth: '92%',
+              textAlign: 'center',
+            }}
+          >
+            {error}
           </div>
         )}
       </div>

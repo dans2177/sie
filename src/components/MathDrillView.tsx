@@ -14,6 +14,7 @@ import {
 } from '../lib/mathDrills';
 import { loadMathDrillsRemote, saveMathDrillsRemote } from '../lib/server';
 import { renderChatContent } from '../lib/chatHelpers';
+import { friendlyChatError } from '../lib/chatHelpers';
 import type { MathDrillCard, MathDrillSummary } from '../types/index';
 
 type Props = {
@@ -490,8 +491,12 @@ Reply briefly with the exact step or insight I need. Do NOT pose another practic
         }))}
 
         {error && (
-          <div style={{ alignSelf: 'center', padding: '8px 12px', borderRadius: '8px', background: '#fef2f2', border: '1px solid #fecaca', color: '#991b1b', fontSize: '12px' }}>
-            {error}
+          <div
+            onClick={() => setError(null)}
+            title="Click to dismiss"
+            style={{ alignSelf: 'center', padding: '8px 12px', borderRadius: '8px', background: '#fef2f2', border: '1px solid #fecaca', color: '#991b1b', fontSize: '12px', cursor: 'pointer', maxWidth: '92%', textAlign: 'center' }}
+          >
+            {friendlyChatError(error)}
           </div>
         )}
       </div>

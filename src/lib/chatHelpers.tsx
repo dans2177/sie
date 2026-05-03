@@ -385,6 +385,19 @@ export function extractMcqQuestionPrompt(content: string): string | undefined {
   return undefined;
 }
 
+/** Map raw fetch/SDK errors to a short tutor-friendly message for the chat banner. */
+export function friendlyChatError(message: string): string {
+  const m = String(message || '').toLowerCase();
+  if (/502|bad\s*gateway|failed to fetch|networkerror|aborted|timeout/.test(m)) {
+    return 'Tutor server is offline. If you are on localhost, run `npm run dev` (which now starts both vite and the API).';
+  }
+  if (/401|auth_error|unauthor/.test(m)) return 'Anthropic key was rejected. Check ANTHROPIC_API_KEY.';
+  if (/429|rate_limited|rate\s*limit/.test(m)) return 'Anthropic rate limit hit. Wait a moment and retry.';
+  if (/529|overload/.test(m)) return 'Anthropic is overloaded. Retry shortly.';
+  if (/5\d\d|upstream/.test(m)) return 'Anthropic upstream error. Retry shortly.';
+  return message;
+}
+
 /** Try to read which option label the assistant flagged as correct. */
 export function extractCorrectAnswerLabel(content: string): string | undefined {
   const text = String(content || '');

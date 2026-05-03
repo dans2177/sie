@@ -25,7 +25,7 @@ import {
   saveTopicChatRemote,
   syncProgress,
 } from './lib/server';
-import { countCorrectAnswers, extractCorrectAnswerLabel, parseAssistantOutcome, upsertAssistantMessage } from './lib/chatHelpers';
+import { countCorrectAnswers, extractCorrectAnswerLabel, friendlyChatError, parseAssistantOutcome, upsertAssistantMessage } from './lib/chatHelpers';
 import type { ChatMessage, Domain, MemorySummary, SelectedTopic, Topic, View } from './types/index';
 import AccessGate from './components/AccessGate';
 import AppHeader from './components/AppHeader';
@@ -70,6 +70,7 @@ export default function App() {
   const [msgs, setMsgs] = useState<ChatMessage[]>([]);
   const [inp, setInp] = useState('');
   const [loading, setLoading] = useState(false);
+  const [chatError, setChatError] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
   const [exp, setExp] = useState<Record<string, boolean>>({ d1: true, d2: false, d3: false, d4: false });
   const [view, setView] = useState<View>('overview');
@@ -313,6 +314,7 @@ export default function App() {
       await saveTopicChatRemote(activeProfile, topicId, next);
 
       setLoading(true);
+      setChatError(null);
       log('chat_user_message', { topicId, length: txt.length, hasAnswer: Boolean(userMeta?.userAnswerLabel) });
       try {
         if (isCurrentRun()) setMsgs(upsertAssistantMessage(next, ''));
@@ -356,11 +358,13 @@ export default function App() {
         });
         log('chat_assistant_message', { topicId, length: r.length, outcome });
       } catch (e) {
-        const full = [...next, { role: 'assistant' as const, content: `Error: ${(e as Error).message}` }];
-        if (isCurrentRun()) setMsgs(full);
-        saveTopicChat(activeProfile, topicId, full);
-        await saveTopicChatRemote(activeProfile, topicId, full);
-        log('chat_assistant_error', { topicId });
+        // Roll the optimistic empty assistant placeholder back; keep the user msg so they can retry.
+        if (isCurrentRun()) setMsgs(next);
+        saveTopicChat(activeProfile, topicId, next);
+        await saveTopicChatRemote(activeProfile, topicId, next);
+        const message = (e as Error).message || 'Tutor unavailable.';
+        if (isCurrentRun()) setChatError(friendlyChatError(message));
+        log('chat_assistant_error', { topicId, message });
       }
       if (isCurrentRun()) setLoading(false);
     },
@@ -715,6 +719,8 @@ export default function App() {
                     spRate={spRate}
                     onSpRateChange={setSpRate}
                     voiceName={voiceName}
+                    error={chatError}
+                    onDismissError={() => setChatError(null)}
                   />
                 </Suspense>
               )}
