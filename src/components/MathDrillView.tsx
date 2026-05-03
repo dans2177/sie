@@ -122,9 +122,14 @@ export default function MathDrillView({ profileId, onLog, onBack, onOpenFormulaS
     setTurns(loadChat(profileId));
     void (async () => {
       const remote = await loadMathDrillsRemote(profileId);
-      if (remote && remote.length) {
-        mergeRemoteMathDrillCards(profileId, remote);
+      if (remote !== null) {
+        // Server is source of truth — merge in (preserves recent local-only edits) then publish back.
+        const merged = mergeRemoteMathDrillCards(profileId, remote);
         refresh();
+        if (merged.length !== remote.length) {
+          // Local had cards remote didn't — push them up so other devices see them too.
+          void saveMathDrillsRemote(profileId, merged);
+        }
       }
     })();
   }, [profileId]);
@@ -420,111 +425,137 @@ Reply briefly with the exact step or insight I need. Do NOT pose another practic
   };
 
   return (
-    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-      <div style={{ padding: '12px 16px', borderBottom: `1px solid ${C.border}`, background: C.panel, flexShrink: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <button onClick={onBack} style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.dim, fontSize: '14px', fontFamily: 'inherit', padding: '2px 6px' }}>← Back</button>
-          <div style={{ width: '7px', height: '7px', borderRadius: '50%', background: C.amber, flexShrink: 0 }} />
-          <div style={{ fontSize: '18px', color: C.text, fontWeight: 'bold' }}>Math XL Drills</div>
-          <div style={{ fontSize: '13px', color: C.dim, marginLeft: 'auto' }}>{summary.tracked} tracked</div>
+    <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+      {/* Left rail: formula list (mirrors the topics sidebar in the topic view) */}
+      <div style={{
+        width: '240px', flexShrink: 0, borderRight: `1px solid ${C.border}`,
+        background: C.panel, display: 'flex', flexDirection: 'column', overflow: 'hidden',
+      }}>
+        <div style={{ padding: '12px 14px', borderBottom: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <button onClick={onBack} style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.dim, fontSize: '13px', fontFamily: 'inherit', padding: 0 }}>← Back</button>
+          <div style={{ fontSize: '13px', fontWeight: 700, color: C.text, marginLeft: 'auto', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Formulas</div>
         </div>
-        <div style={{ fontSize: '14px', color: C.dim, marginTop: '3px' }}>
-          Conversational fill-in-the-blank practice across every SIE formula.
-        </div>
-
-        <div style={{ marginTop: '8px', background: C.card, border: `1px solid ${C.border}`, borderRadius: '8px', padding: '10px' }}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100px, 100%), 1fr))', gap: '8px' }}>
-            <div style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: '8px', padding: '8px', textAlign: 'center' }}>
-              <div style={{ fontSize: '11px', color: C.dim }}>Attempts</div>
-              <div style={{ fontSize: '18px', fontWeight: 700, color: C.text }}>{summary.attempts}</div>
-            </div>
-            <div style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: '8px', padding: '8px', textAlign: 'center' }}>
-              <div style={{ fontSize: '11px', color: C.dim }}>Mastered</div>
-              <div style={{ fontSize: '18px', fontWeight: 700, color: C.d3 }}>{summary.mastered}</div>
-            </div>
-            <div style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: '8px', padding: '8px', textAlign: 'center' }}>
-              <div style={{ fontSize: '11px', color: C.dim }}>Accuracy</div>
-              <div style={{ fontSize: '18px', fontWeight: 700, color: C.amber }}>{summary.accuracyPct}%</div>
-            </div>
-          </div>
-        </div>
-
-        <div style={{ display: 'flex', gap: '6px', marginTop: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
-          <span style={{ fontSize: '11px', color: C.ghost, marginRight: '2px' }}>Focus:</span>
-          {[{ id: 'all', title: 'All', accuracyPct: 0, attempts: 0 }, ...formulaStats].map((formula) => {
+        <div style={{ flex: 1, overflowY: 'auto', padding: '8px' }}>
+          {[{ id: 'all', title: 'All formulas', attempts: 0, accuracyPct: 0 } as typeof formulaStats[number], ...formulaStats].map((formula) => {
             const active = focusFormulaId === formula.id;
             return (
-              <button key={formula.id} onClick={() => setFocusFormulaId(formula.id)} style={{
-                padding: '3px 9px', borderRadius: '999px',
-                border: `1px solid ${active ? C.amber : C.border}`,
-                background: active ? C.amberBg : 'transparent',
-                color: active ? C.amber : C.dim,
-                fontSize: '12px', cursor: 'pointer', fontFamily: 'inherit',
-              }}>
-                {formula.title}{formula.attempts > 0 ? ` ${formula.accuracyPct}%` : ''}
+              <button
+                key={formula.id}
+                onClick={() => setFocusFormulaId(formula.id)}
+                style={{
+                  display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '2px',
+                  width: '100%', textAlign: 'left',
+                  padding: '8px 10px', marginBottom: '4px',
+                  borderRadius: '8px', cursor: 'pointer',
+                  border: `1px solid ${active ? C.amber : 'transparent'}`,
+                  background: active ? C.amberBg : 'transparent',
+                  color: active ? C.amber : C.text,
+                  fontFamily: 'inherit', fontSize: '13px', fontWeight: 600,
+                }}
+              >
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' }}>{formula.title}</span>
+                {formula.id !== 'all' && (
+                  <span style={{ fontSize: '11px', fontWeight: 500, color: active ? C.amber : C.dim }}>
+                    {formula.attempts > 0 ? `${formula.attempts} att · ${formula.accuracyPct}%` : 'no attempts'}
+                  </span>
+                )}
               </button>
             );
           })}
-          <div style={{ marginLeft: 'auto', display: 'flex', gap: '6px' }}>
+        </div>
+      </div>
+
+      {/* Right pane: header + chat + input (matches ChatView shape) */}
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        <div style={{ padding: '12px 16px', borderBottom: `1px solid ${C.border}`, background: C.panel, flexShrink: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <div style={{ width: '7px', height: '7px', borderRadius: '50%', background: C.amber, flexShrink: 0 }} />
+            <div style={{ fontSize: '18px', color: C.text, fontWeight: 'bold' }}>Math XL Drills</div>
+            <div style={{ fontSize: '13px', color: C.dim, marginLeft: 'auto' }}>{summary.tracked} tracked</div>
+          </div>
+          <div style={{ fontSize: '14px', color: C.dim, marginTop: '3px' }}>
+            {focusFormulaId === 'all'
+              ? 'Conversational fill-in-the-blank practice across every SIE formula.'
+              : `Focused on ${MATH.find((f) => f.id === focusFormulaId)?.title ?? 'formula'} — pick All on the left to mix.`}
+          </div>
+
+          <div style={{ marginTop: '8px', background: C.card, border: `1px solid ${C.border}`, borderRadius: '8px', padding: '10px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100px, 100%), 1fr))', gap: '8px' }}>
+              <div style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: '8px', padding: '8px', textAlign: 'center' }}>
+                <div style={{ fontSize: '11px', color: C.dim }}>Attempts</div>
+                <div style={{ fontSize: '18px', fontWeight: 700, color: C.text }}>{summary.attempts}</div>
+              </div>
+              <div style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: '8px', padding: '8px', textAlign: 'center' }}>
+                <div style={{ fontSize: '11px', color: C.dim }}>Mastered</div>
+                <div style={{ fontSize: '18px', fontWeight: 700, color: C.d3 }}>{summary.mastered}</div>
+              </div>
+              <div style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: '8px', padding: '8px', textAlign: 'center' }}>
+                <div style={{ fontSize: '11px', color: C.dim }}>Accuracy</div>
+                <div style={{ fontSize: '18px', fontWeight: 700, color: C.amber }}>{summary.accuracyPct}%</div>
+              </div>
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', gap: '6px', marginTop: '8px', justifyContent: 'flex-end' }}>
             <button onClick={() => setCalcOpen((v) => !v)} style={{ ...tinyBtn, background: calcOpen ? C.amberBg : C.card, color: calcOpen ? C.amber : C.text, borderColor: calcOpen ? C.amber : C.border }}>🧮 Calc</button>
             <button onClick={onOpenFormulaSheet} style={tinyBtn}>Formulas</button>
             <button onClick={onOpenCheatSheet} style={tinyBtn}>Cheatsheet</button>
             <button onClick={resetAll} style={{ ...tinyBtn, color: '#dc2626', borderColor: '#fecaca' }}>Reset</button>
           </div>
         </div>
-      </div>
 
-      <div ref={scrollRef} style={{ flex: 1, overflowY: 'auto', padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-        {turns.map((turn, idx) => renderTurn(turn, idx, {
-          onChangeBlank: (cardId, blankIdx, value) => {
-            setTurns((prev) => prev.map((t) => {
-              if (t.kind !== 'question' || t.card.id !== cardId) return t;
-              const next = t.blankAnswers.slice();
-              next[blankIdx] = value;
-              return { ...t, blankAnswers: next };
-            }));
-          },
-          onChangeSingle: (cardId, value) => updateQuestionTurn(cardId, { singleAnswer: value }),
-          onSubmit: (q) => { void submitQuestion(q); },
-          onNext: () => askNextQuestion(),
-          canRequestNext,
-        }))}
+        <div ref={scrollRef} style={{ flex: 1, overflowY: 'auto', padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          {turns.map((turn, idx) => renderTurn(turn, idx, {
+            onChangeBlank: (cardId, blankIdx, value) => {
+              setTurns((prev) => prev.map((t) => {
+                if (t.kind !== 'question' || t.card.id !== cardId) return t;
+                const next = t.blankAnswers.slice();
+                next[blankIdx] = value;
+                return { ...t, blankAnswers: next };
+              }));
+            },
+            onChangeSingle: (cardId, value) => updateQuestionTurn(cardId, { singleAnswer: value }),
+            onSubmit: (q) => { void submitQuestion(q); },
+            onNext: () => askNextQuestion(),
+            canRequestNext,
+          }))}
 
-        {error && (
-          <div
-            onClick={() => setError(null)}
-            title="Click to dismiss"
-            style={{ alignSelf: 'center', padding: '8px 12px', borderRadius: '8px', background: '#fef2f2', border: '1px solid #fecaca', color: '#991b1b', fontSize: '12px', cursor: 'pointer', maxWidth: '92%', textAlign: 'center' }}
-          >
-            {friendlyChatError(error)}
-          </div>
-        )}
-      </div>
+          {error && (
+            <div
+              onClick={() => setError(null)}
+              title="Click to dismiss"
+              style={{ alignSelf: 'center', padding: '8px 12px', borderRadius: '8px', background: '#fef2f2', border: '1px solid #fecaca', color: '#991b1b', fontSize: '12px', cursor: 'pointer', maxWidth: '92%', textAlign: 'center' }}
+            >
+              {friendlyChatError(error)}
+            </div>
+          )}
+        </div>
 
-      <div style={{ padding: '12px 16px', borderTop: `1px solid ${C.border}`, background: C.panel, display: 'flex', gap: '8px', flexShrink: 0 }}>
-        <input
-          value={input}
-          onChange={(event) => setInput(event.target.value)}
-          onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); void sendChatMessage(); } }}
-          placeholder={busy ? 'Thinking…' : 'Ask a follow-up, or type "next" for another problem…'}
-          disabled={busy}
-          style={{
-            flex: 1, padding: '10px 12px', borderRadius: '8px',
-            border: `1px solid ${C.border}`, background: C.card, color: C.text,
-            fontFamily: 'inherit', fontSize: '14px', outline: 'none',
-          }}
-        />
-        <button onClick={() => void sendChatMessage()} disabled={busy || !input.trim()} style={{
-          padding: '10px 16px', borderRadius: '8px', border: 'none',
-          background: C.amber, color: '#ffffff', cursor: busy || !input.trim() ? 'not-allowed' : 'pointer',
-          fontFamily: 'inherit', fontSize: '14px', fontWeight: 600,
-          opacity: busy || !input.trim() ? 0.5 : 1,
-        }}>Send</button>
-        <button onClick={() => void askNextQuestion()} disabled={!canRequestNext} style={{
-          padding: '10px 14px', borderRadius: '8px', border: `1px solid ${C.border}`,
-          background: C.card, color: canRequestNext ? C.text : C.ghost,
-          cursor: canRequestNext ? 'pointer' : 'not-allowed', fontFamily: 'inherit', fontSize: '14px', fontWeight: 500,
-        }}>Next →</button>
+        <div style={{ padding: '12px 16px', borderTop: `1px solid ${C.border}`, background: C.panel, display: 'flex', gap: '8px', flexShrink: 0 }}>
+          <input
+            value={input}
+            onChange={(event) => setInput(event.target.value)}
+            onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); void sendChatMessage(); } }}
+            placeholder={busy ? 'Thinking…' : 'Ask a follow-up, or type "next" for another problem…'}
+            disabled={busy}
+            style={{
+              flex: 1, padding: '10px 12px', borderRadius: '8px',
+              border: `1px solid ${C.border}`, background: C.card, color: C.text,
+              fontFamily: 'inherit', fontSize: '14px', outline: 'none',
+            }}
+          />
+          <button onClick={() => void sendChatMessage()} disabled={busy || !input.trim()} style={{
+            padding: '10px 16px', borderRadius: '8px', border: 'none',
+            background: C.amber, color: '#ffffff', cursor: busy || !input.trim() ? 'not-allowed' : 'pointer',
+            fontFamily: 'inherit', fontSize: '14px', fontWeight: 600,
+            opacity: busy || !input.trim() ? 0.5 : 1,
+          }}>Send</button>
+          <button onClick={() => void askNextQuestion()} disabled={!canRequestNext} style={{
+            padding: '10px 14px', borderRadius: '8px', border: `1px solid ${C.border}`,
+            background: C.card, color: canRequestNext ? C.text : C.ghost,
+            cursor: canRequestNext ? 'pointer' : 'not-allowed', fontFamily: 'inherit', fontSize: '14px', fontWeight: 500,
+          }}>Next →</button>
+        </div>
       </div>
 
       {calcOpen && <CalculatorPanel onClose={() => setCalcOpen(false)} />}

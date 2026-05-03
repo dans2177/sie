@@ -238,20 +238,26 @@ export default function App() {
       log('topic_opened', { topicId: topic.id, topicCode: topic.code });
 
       const remote = await loadTopicChatRemote(activeProfile, topic.id);
-      if (remote && remote.length > 0) {
-        if (isCurrentRun()) setMsgs(remote);
-        saveTopicChat(activeProfile, topic.id, remote);
-        markTopicPassed(topic.id, remote);
-        if (isCurrentRun()) setLoading(false);
-        return;
-      }
-
-      const cached = loadTopicChat(activeProfile, topic.id);
-      if (cached.length > 0) {
-        if (isCurrentRun()) setMsgs(cached as ChatMessage[]);
-        markTopicPassed(topic.id, cached as ChatMessage[]);
-        if (isCurrentRun()) setLoading(false);
-        return;
+      if (remote !== null) {
+        // Server is the source of truth: trust it even when empty so dev/prod stay in sync.
+        if (remote.length > 0) {
+          if (isCurrentRun()) setMsgs(remote);
+          saveTopicChat(activeProfile, topic.id, remote);
+          markTopicPassed(topic.id, remote);
+          if (isCurrentRun()) setLoading(false);
+          return;
+        }
+        // Server says empty → drop any stale local cache for this topic.
+        saveTopicChat(activeProfile, topic.id, []);
+      } else {
+        // Server unreachable — fall back to local cache.
+        const cached = loadTopicChat(activeProfile, topic.id);
+        if (cached.length > 0) {
+          if (isCurrentRun()) setMsgs(cached as ChatMessage[]);
+          markTopicPassed(topic.id, cached as ChatMessage[]);
+          if (isCurrentRun()) setLoading(false);
+          return;
+        }
       }
 
       const init: ChatMessage[] = [
@@ -285,10 +291,8 @@ export default function App() {
         });
         log('topic_bootstrap_generated', { topicId: topic.id });
       } catch (e) {
-        const next = [...init, { role: 'assistant' as const, content: `Error: ${(e as Error).message}` }];
-        if (isCurrentRun()) setMsgs(next);
-        saveTopicChat(activeProfile, topic.id, next);
-        await saveTopicChatRemote(activeProfile, topic.id, next);
+        if (isCurrentRun()) setMsgs(init);
+        setChatError(friendlyChatError((e as Error).message));
         log('topic_bootstrap_error', { topicId: topic.id });
       }
       if (isCurrentRun()) setLoading(false);
