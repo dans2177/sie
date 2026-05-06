@@ -1,6 +1,7 @@
 import Anthropic, { APIError } from '@anthropic-ai/sdk';
 import { logTokenUsage } from './_db.js';
 import { sanitizeMathDelimiters } from './_sanitizeMath.js';
+import { SUBMIT_REPLY_TOOL, renderStructuredReply } from './_renderReply.js';
 
 function send(res, code, payload) {
   res.status(code).setHeader('Content-Type', 'application/json');
@@ -25,90 +26,28 @@ function classifyAnthropicError(error) {
 function buildSystemPrompt(topic, domain, adaptiveBrief) {
   return `You are an elite SIE exam teacher and practical coach. Current topic: "${topic?.title ?? ''}" - ${domain?.label ?? ''}: ${domain?.title ?? ''} (${domain?.weight ?? ''} of exam, ~${domain?.items ?? ''} questions).
 
-Rules:
-- Concise, exam-focused. No filler. Keep initial response under 350 words unless asked to go deeper.
-- Mark key terms [DEF] and top exam traps [EXAM TIP].
-- After your initial explanation, always end with ONE practice exam-style multiple-choice question (4 options, A-D).
-- If they answer correctly, confirm and give a harder follow-up. If wrong, explain why and retry.
-- Cite FINRA/SEC rule numbers when directly relevant.
-- Use mnemonics where genuinely helpful.
-- When hierarchy/process visuals help, include a compact chart in a fenced code block using arrows (example: A -> B -> C).
-- Math formatting (STRICT — output is rendered with KaTeX + Markdown):
-  - Use LaTeX delimiters ONLY for genuine mathematical expressions, equations, or single variables. Examples that ARE math: $YTM$, $P = \\frac{C}{r}$, $5{,}000 \\times 0.042$.
-  - DO NOT wrap plain prose, sentences, parenthetical asides, units, or labels in $...$. If it contains everyday words separated by spaces (e.g. "instead of market price"), it is PROSE — write it as plain text.
-  - Currency: ALWAYS write dollar amounts as escaped text: \\$5{,}000 or \\$210. NEVER write "$5,000" — the bare $ will be parsed as a math delimiter and break the page. NEVER put currency inside $...$.
-  - NEVER nest markdown inside math: no **bold**, no *italic*, no \`code\` between $...$. KaTeX ignores them and the result renders as garbled italics.
-  - Inside math, separate thousands with \\, or {,} (e.g. $5{,}000$). Outside math, write 5,000 normally.
-  - Every $ must have a matching closing $. Every $$ must have a matching closing $$. Count them before sending.
-  - Do NOT escape math with backticks.
+YOU MUST respond by calling the submit_reply tool. Never write free-form prose outside the tool call.
 
-  CORRECT examples:
-    Annual coupon = \\$5{,}000 \\times 4.2\\% = \\$210
-    Current Yield = $\\frac{210}{4{,}650} = 4.52\\%$
-    Always anchor the denominator to market price, not par.
+Content rules:
+- Concise, exam-focused. Total reply under 350 words unless the learner asks to go deeper.
+- Mark key terms inline as "[DEF] term" and top exam traps as "[EXAM TIP] note".
+- After your initial explanation, ALWAYS include an mcq with 4 options A-D.
+- If the learner answered, set outcome=CORRECT or NEEDS_WORK accordingly. Otherwise NEUTRAL.
+- Cite FINRA/SEC rule numbers when directly relevant. Use mnemonics where genuinely helpful.
 
-  WRONG examples (do NOT do this):
-    $5,000 \\times 4.2\\% = \\$210$            (mixes escaped and unescaped $; orphan $)
-    $(5,000) instead of market price (4,650)$  (this is prose, not math)
-    Current Yield = $210 ** / ** 4{,}650$       (markdown bold inside math)
-    The price is $4,650 today.                  (bare $ in prose — escape it: \\$4{,}650)
-
-- Use a mastery cadence: teach -> test -> diagnose mistake pattern -> retest with variation.
-- Prefer realistic SIE-style scenarios over definition-only drills.
-- Keep tone supportive and motivating for repeat daily practice.
-- When evaluating a learner answer, include EXACTLY one status tag on its own line at the top: [OUTCOME:CORRECT] or [OUTCOME:NEEDS_WORK].
-- For normal teaching messages without grading, include [OUTCOME:NEUTRAL] on its own line at the top.
-- If you include a multiple-choice question, options must use this exact format on separate lines: A) ... B) ... C) ... D) ...
+Formatting rules (CRITICAL — output is rendered by the host, not by you):
+- DO NOT write LaTeX delimiters ($..$, $$..$$, \\(..\\), \\[..\\]) anywhere in any string field.
+- DO NOT write markdown bold (**text**) or italic (*text*) anywhere. Headings come from section.heading, not from **bold** prose.
+- For INLINE math inside a prose string, use the literal marker [[MATH:latex]]. Example: "Use [[MATH:\\\\frac{C}{P}]] to compute current yield."
+- For DISPLAYED equations, put raw LaTeX (no $$ wrapper) in section.math.
+- Currency: write plain "$5,000" or "$1,000" in prose strings — the host escapes it for safe rendering.
+- MCQ options go in mcq.options as { label, text } with labels A-D in order.
 ${adaptiveBrief ? `
 
 Adaptive memory context:
 ${adaptiveBrief}
 
 Use this context to target weak areas and avoid repeating what the learner already mastered.` : ''}`;
-}
-
-function normalizeAssistantText(text) {
-  let out = String(text || '')
-    .replace(/\r\n/g, '\n')
-    .replace(/[\u2018\u2019]/g, "'")
-    .replace(/[\u201C\u201D]/g, '"')
-    .trim();
-
-  out = sanitizeMathDelimiters(out);
-
-  // If the model put A) B) C) D) on a single line, split them onto separate lines.
-  // Look for at least two option labels on the same line and break before each.
-  out = out
-    .split('\n')
-    .map((line) => {
-      const labels = line.match(/(?:^|\s)[A-D]\)\s/g) || [];
-      if (labels.length >= 2) {
-        // Insert a newline before every "A)" / "B)" / etc. that follows whitespace mid-line.
-        return line.replace(/\s+([A-D]\)\s)/g, '\n$1').trim();
-      }
-      return line;
-    })
-    .join('\n');
-
-  out = out
-    .split('\n')
-    .map((line) => {
-      const m = line.trim().match(/^[-*\s]*([A-Da-d])[\).:\-]\s+(.+)$/);
-      if (!m) return line;
-      return `${m[1].toUpperCase()}) ${m[2].trim()}`;
-    })
-    .join('\n');
-
-  // Ensure each option line is its own markdown paragraph (markdown collapses single
-  // newlines, so add a blank line before the first option and between consecutive ones).
-  out = out.replace(/([^\n])\n([A-D]\) )/g, '$1\n\n$2');
-  out = out.replace(/^([A-D]\) .+)\n([A-D]\) )/gm, '$1\n\n$2');
-
-  if (!/^\[OUTCOME:(CORRECT|NEEDS_WORK|NEUTRAL)\]/i.test(out)) {
-    out = `[OUTCOME:NEUTRAL]\n${out}`;
-  }
-
-  return out;
 }
 
 export default async function handler(req, res) {
@@ -147,11 +86,12 @@ export default async function handler(req, res) {
     const systemText = buildSystemPrompt(topic, domain, adaptiveBrief);
     const reqConfig = {
       model: 'claude-sonnet-4-6',
-      max_tokens: 1000,
-      // Cache the (large, mostly-static) system prompt so repeat turns reuse it.
+      max_tokens: 1400,
       system: [
         { type: 'text', text: systemText, cache_control: { type: 'ephemeral' } },
       ],
+      tools: [SUBMIT_REPLY_TOOL],
+      tool_choice: { type: 'tool', name: 'submit_reply' },
       messages: apiMessages,
     };
 
@@ -160,30 +100,35 @@ export default async function handler(req, res) {
       res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
       res.setHeader('Cache-Control', 'no-cache, no-transform');
       res.setHeader('Connection', 'keep-alive');
+      res.setHeader('X-Accel-Buffering', 'no');
+      if (typeof res.flushHeaders === 'function') {
+        try { res.flushHeaders(); } catch {}
+      }
 
-      const s = client.messages.stream(reqConfig);
-      let latest = '';
-
-      s.on('text', (textDelta, textSnapshot) => {
-        latest = textSnapshot || `${latest}${textDelta || ''}`;
-        res.write(
-          `${JSON.stringify({ type: 'delta', delta: textDelta || '', snapshot: latest })}\n`
-        );
-      });
+      // Heartbeat keeps the connection warm while we wait for the tool result.
+      // The structured tool input cannot be streamed as readable markdown, so we
+      // wait for the full response, render to clean markdown, then emit one delta.
+      res.write(`${JSON.stringify({ type: 'delta', delta: '', snapshot: '' })}\n`);
+      const heartbeat = setInterval(() => {
+        try { res.write(`${JSON.stringify({ type: 'heartbeat' })}\n`); } catch {}
+      }, 2000);
 
       try {
-        const finalText = await s.finalText();
-        latest = normalizeAssistantText(finalText || latest);
-        try {
-          const finalMsg = await s.finalMessage();
-          if (finalMsg?.usage) {
-            void logTokenUsage({ profileId, endpoint: 'topic-ai', model: reqConfig.model, usage: finalMsg.usage });
-          }
-        } catch {}
-        res.write(`${JSON.stringify({ type: 'done', text: latest })}\n`);
+        const response = await client.messages.create(reqConfig);
+        clearInterval(heartbeat);
+        if (response?.usage) {
+          void logTokenUsage({ profileId, endpoint: 'topic-ai', model: reqConfig.model, usage: response.usage });
+        }
+        const toolUse = response.content.find((b) => b.type === 'tool_use' && b.name === 'submit_reply');
+        const struct = toolUse?.input || {};
+        let rendered = renderStructuredReply(struct);
+        rendered = sanitizeMathDelimiters(rendered);
+        res.write(`${JSON.stringify({ type: 'delta', delta: rendered, snapshot: rendered })}\n`);
+        res.write(`${JSON.stringify({ type: 'done', text: rendered })}\n`);
         res.end();
         return;
       } catch (error) {
+        clearInterval(heartbeat);
         const info = classifyAnthropicError(error);
         res.write(`${JSON.stringify({ type: 'error', kind: info.kind, status: info.status, error: info.message })}\n`);
         res.end();
@@ -196,12 +141,10 @@ export default async function handler(req, res) {
       void logTokenUsage({ profileId, endpoint: 'topic-ai', model: reqConfig.model, usage: response.usage });
     }
 
-    const textRaw = response.content
-      .filter((b) => b.type === 'text')
-      .map((b) => (b.type === 'text' ? b.text : ''))
-      .join('\n')
-      .trim();
-    const text = normalizeAssistantText(textRaw);
+    const toolUse = response.content.find((b) => b.type === 'tool_use' && b.name === 'submit_reply');
+    const struct = toolUse?.input || {};
+    let text = renderStructuredReply(struct);
+    text = sanitizeMathDelimiters(text);
 
     return send(res, 200, { ok: true, text });
   } catch (error) {

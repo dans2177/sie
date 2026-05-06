@@ -7,8 +7,7 @@
 export function sanitizeMathDelimiters(text) {
   let out = String(text || '');
 
-  // 0) Pre-pass: neutralize escaped dollars (currency) so they don't break math pairing.
-  //    `\$210` -> sentinel, restored as plain `$210` at the end.
+  // 0) Pre-pass: neutralize escaped dollars (currency the model already escaped).
   const DOLLAR_SENTINEL = '\u0001CURRENCY\u0001';
   out = out.replace(/\\\$/g, DOLLAR_SENTINEL);
 

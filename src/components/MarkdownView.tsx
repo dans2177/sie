@@ -23,6 +23,7 @@ function sanitizeMathDelimiters(text: string): string {
   let out = String(text || '');
 
   const DOLLAR_SENTINEL = '\u0001CURRENCY\u0001';
+  // Escaped currency the model already wrote.
   out = out.replace(/\\\$/g, DOLLAR_SENTINEL);
 
   // Strip markdown bold/italic inside math (block + inline).
