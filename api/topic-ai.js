@@ -36,12 +36,15 @@ Content rules:
 - Cite FINRA/SEC rule numbers when directly relevant. Use mnemonics where genuinely helpful.
 
 Formatting rules (CRITICAL — output is rendered by the host, not by you):
-- DO NOT write LaTeX delimiters ($..$, $$..$$, \\(..\\), \\[..\\]) anywhere in any string field.
-- DO NOT write markdown bold (**text**) or italic (*text*) anywhere. Headings come from section.heading, not from **bold** prose.
-- For INLINE math inside a prose string, use the literal marker [[MATH:latex]]. Example: "Use [[MATH:\\\\frac{C}{P}]] to compute current yield."
-- For DISPLAYED equations, put raw LaTeX (no $$ wrapper) in section.math.
-- Currency: write plain "$5,000" or "$1,000" in prose strings — the host escapes it for safe rendering.
-- MCQ options go in mcq.options as { label, text } with labels A-D in order.
+- DO NOT write LaTeX delimiters ($..$, $$..$$, \\(..\\), \\[..\\]) anywhere in any string.
+- DO NOT write markdown bold (**text**) or italic (*text*). Headings come from section.heading.
+- Prose fields (intro, body, bullets[], mcq.stem, mcq.options[].text) are ARRAYS of {type, value} parts:
+  * {"type":"text","value":"..."}  for words, punctuation, currency like "$1,000".
+  * {"type":"math","value":"\\\\frac{C}{P}"}  for ANY LaTeX — never put LaTeX in a text part.
+  Example intro:
+    [{"type":"text","value":"Current yield is "},{"type":"math","value":"\\\\frac{C}{P}"},{"type":"text","value":", so a $50 coupon on a $1,100 bond gives "},{"type":"math","value":"4.55\\\\%"},{"type":"text","value":"."}]
+- For DISPLAYED equations, put raw LaTeX (no $$ wrapper) in section.math (a plain string).
+- MCQ options go in mcq.options as { label, text } with labels A-D in order; text is also a parts array.
 ${adaptiveBrief ? `
 
 Adaptive memory context:

@@ -116,3 +116,80 @@ test('full example produces clean markdown with no broken delimiters', () => {
   // Outcome tag.
   assert.match(out, /^\[OUTCOME:NEEDS_WORK\]/);
 });
+
+test('parts-array intro: text + math + text becomes clean markdown', () => {
+  const out = renderStructuredReply({
+    outcome: 'NEUTRAL',
+    intro: [
+      { type: 'text', value: 'Use ' },
+      { type: 'math', value: '\\frac{C}{P}' },
+      { type: 'text', value: ' for current yield.' },
+    ],
+  });
+  assert.match(out, /Use \$\\frac\{C\}\{P\}\$ for current yield\./);
+});
+
+test('parts-array escapes currency in text parts', () => {
+  const out = renderStructuredReply({
+    outcome: 'NEUTRAL',
+    intro: [
+      { type: 'text', value: 'A bond at par $1,000 trading at $6,800.' },
+    ],
+  });
+  assert.match(out, /\\\$1,000/);
+  assert.match(out, /\\\$6,800/);
+  assert.ok(!/(?<!\\)\$\d/.test(out));
+});
+
+test('parts-array math part: strips $ wrappers if model added them', () => {
+  const out = renderStructuredReply({
+    outcome: 'NEUTRAL',
+    intro: [
+      { type: 'text', value: 'See ' },
+      { type: 'math', value: '$\\frac{1}{2}$' },
+    ],
+  });
+  // Should not double-wrap; final form is single $..$.
+  assert.match(out, /\$\\frac\{1\}\{2\}\$/);
+  assert.ok(!/\$\$\\frac/.test(out));
+});
+
+test('parts-array bullets render with math', () => {
+  const out = renderStructuredReply({
+    outcome: 'NEUTRAL',
+    intro: 'x',
+    sections: [
+      {
+        bullets: [
+          [
+            { type: 'text', value: 'Coupon ' },
+            { type: 'math', value: '5\\%' },
+          ],
+          [
+            { type: 'text', value: 'Price $1,100' },
+          ],
+        ],
+      },
+    ],
+  });
+  assert.match(out, /- Coupon \$5\\%\$/);
+  assert.match(out, /- Price \\\$1,100/);
+});
+
+test('parts-array MCQ option text', () => {
+  const out = renderStructuredReply({
+    outcome: 'NEUTRAL',
+    intro: 'q',
+    mcq: {
+      stem: [{ type: 'text', value: 'What is ' }, { type: 'math', value: '2+2' }, { type: 'text', value: '?' }],
+      options: [
+        { label: 'A', text: [{ type: 'text', value: '3' }] },
+        { label: 'B', text: [{ type: 'text', value: '4' }] },
+        { label: 'C', text: [{ type: 'text', value: '5' }] },
+        { label: 'D', text: [{ type: 'text', value: '6' }] },
+      ],
+    },
+  });
+  assert.match(out, /What is \$2\+2\$\?/);
+  assert.match(out, /A\) 3\n\nB\) 4\n\nC\) 5\n\nD\) 6/);
+});

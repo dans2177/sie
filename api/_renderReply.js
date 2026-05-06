@@ -1,6 +1,11 @@
 // Render a structured `submit_reply` tool result into clean markdown.
 // This is the ONLY place LaTeX/markdown delimiters are produced server-side,
 // so the output is guaranteed well-formed regardless of what the model said.
+//
+// SCHEMA DESIGN: prose fields are arrays of typed parts
+//   { type: "text", value: "..." }   -> rendered as escaped prose
+//   { type: "math", value: "latex" } -> rendered as $latex$ (inline) or $$latex$$ (block)
+// This makes it structurally impossible for raw LaTeX to leak into prose.
 
 const OUTCOMES = new Set(['CORRECT', 'NEEDS_WORK', 'NEUTRAL']);
 
@@ -19,16 +24,33 @@ function escapeProseDollars(s) {
 // formatting the model accidentally placed inside the math.
 function cleanLatex(s) {
   let t = String(s || '').trim();
-  t = t.replace(/^\$\$|\$\$$/g, '').replace(/^\$|\$$/g, '').trim();
+  t = t.replace(/^\$\$([\s\S]*)\$\$$/, '$1').replace(/^\$([\s\S]*)\$$/, '$1').trim();
   t = t.replace(/\*\*([^*]+)\*\*/g, '$1').replace(/(?<!\\)\*([^*\n]+)\*/g, '$1');
   return t;
 }
 
-function renderInline(text) {
-  // Inline math comes in as a marker `[[MATH:latex]]` from the structured prose
-  // field; everything else is escaped prose.
-  if (!text) return '';
-  const parts = String(text).split(/(\[\[MATH:[^\]]+\]\])/g);
+// Render a value that may be:
+//   - a string (legacy / fallback): escape prose; also support inline [[MATH:..]] markers.
+//   - an array of { type, value } parts.
+function renderInline(value) {
+  if (value == null) return '';
+  if (Array.isArray(value)) {
+    return value
+      .map((part) => {
+        if (!part) return '';
+        if (typeof part === 'string') return renderInline(part);
+        const type = String(part.type || 'text').toLowerCase();
+        const v = part.value ?? part.text ?? '';
+        if (type === 'math') {
+          const latex = cleanLatex(v);
+          return latex ? `$${latex}$` : '';
+        }
+        return escapeProseDollars(v);
+      })
+      .join('');
+  }
+  // String fallback: support legacy [[MATH:..]] markers.
+  const parts = String(value).split(/(\[\[MATH:[^\]]+\]\])/g);
   return parts
     .map((p) => {
       const m = p.match(/^\[\[MATH:([^\]]+)\]\]$/);
@@ -44,13 +66,15 @@ function renderSection(section) {
   if (section.heading) {
     lines.push(`**${escapeProseDollars(section.heading)}**`);
   }
-  if (section.body) {
-    lines.push(renderInline(section.body));
+  if (section.body !== undefined && section.body !== null) {
+    const rendered = renderInline(section.body);
+    if (rendered) lines.push(rendered);
   }
   if (Array.isArray(section.bullets) && section.bullets.length) {
     for (const b of section.bullets) {
-      if (!b) continue;
-      lines.push(`- ${renderInline(b)}`);
+      if (b == null) continue;
+      const rendered = renderInline(b);
+      if (rendered) lines.push(`- ${rendered}`);
     }
   }
   if (section.math) {
@@ -74,7 +98,6 @@ function renderMcq(mcq) {
     const txt = renderInline(o?.text ?? '');
     lines.push(`${label}) ${txt}`);
   }
-  // Markdown-friendly: blank lines between blocks so options render on separate lines.
   return lines.join('\n\n');
 }
 
@@ -82,8 +105,9 @@ export function renderStructuredReply(reply) {
   const outcome = normalizeOutcome(reply?.outcome);
   const blocks = [];
 
-  if (reply?.intro) {
-    blocks.push(renderInline(reply.intro));
+  if (reply?.intro !== undefined && reply?.intro !== null) {
+    const rendered = renderInline(reply.intro);
+    if (rendered) blocks.push(rendered);
   }
   if (Array.isArray(reply?.sections)) {
     for (const s of reply.sections) {
@@ -100,11 +124,31 @@ export function renderStructuredReply(reply) {
   return `[OUTCOME:${outcome}]\n${body}`;
 }
 
-// Schema description shared with the prompt + Anthropic tool definition.
+// Reusable inline-prose schema: array of typed parts so the model literally
+// cannot smuggle raw LaTeX into prose. Strings are also accepted at render
+// time for backward compatibility, but the schema steers toward array form.
+const INLINE_PROSE_SCHEMA = {
+  type: 'array',
+  description:
+    'Inline prose as an ordered list of parts. Use {type:"text"} for words/punctuation/currency and {type:"math"} for any LaTeX expression. NEVER put LaTeX inside a text part.',
+  items: {
+    type: 'object',
+    properties: {
+      type: { type: 'string', enum: ['text', 'math'] },
+      value: {
+        type: 'string',
+        description:
+          'For type=text: plain prose, e.g. "The current yield equals ". For type=math: raw LaTeX with no $ wrappers, e.g. "\\\\frac{C}{P}".',
+      },
+    },
+    required: ['type', 'value'],
+  },
+};
+
 export const SUBMIT_REPLY_TOOL = {
   name: 'submit_reply',
   description:
-    'Return your reply as a structured object. The host renders it to markdown — do NOT format with LaTeX delimiters or markdown bold/italic; use the schema fields instead.',
+    'Return your reply as a structured object. The host renders it to markdown. All prose fields are arrays of {type, value} parts: use type="text" for words and type="math" for any LaTeX expression. The host wraps math in $..$ and escapes currency. NEVER write $..$, $$..$$, **bold**, or *italic* in any string.',
   input_schema: {
     type: 'object',
     properties: {
@@ -115,9 +159,9 @@ export const SUBMIT_REPLY_TOOL = {
           'CORRECT/NEEDS_WORK only when grading a learner answer; otherwise NEUTRAL.',
       },
       intro: {
-        type: 'string',
+        ...INLINE_PROSE_SCHEMA,
         description:
-          'Opening prose paragraph. Plain text. For inline math, use the marker [[MATH:latex]] (e.g. "Use [[MATH:\\\\frac{C}{P}]] to find current yield"). Do NOT write $..$ or **bold** here.',
+          'Opening paragraph as parts. Example: [{"type":"text","value":"Use "},{"type":"math","value":"\\\\frac{C}{P}"},{"type":"text","value":" to find current yield."}]',
       },
       sections: {
         type: 'array',
@@ -125,16 +169,16 @@ export const SUBMIT_REPLY_TOOL = {
         items: {
           type: 'object',
           properties: {
-            heading: { type: 'string', description: 'Optional bold section title.' },
+            heading: { type: 'string', description: 'Optional section title (plain text).' },
             body: {
-              type: 'string',
+              ...INLINE_PROSE_SCHEMA,
               description:
-                'Prose paragraph. Use [[MATH:latex]] for inline math. No $.. delimiters, no **bold**.',
+                'Paragraph as parts. Use type="math" for any LaTeX (no $ wrappers). Currency like "$1,000" goes in a text part.',
             },
             bullets: {
               type: 'array',
-              items: { type: 'string' },
-              description: 'Optional bullet list. Each bullet is plain prose; use [[MATH:latex]] for inline math.',
+              description: 'Optional bullet list. Each bullet is an inline-prose parts array.',
+              items: INLINE_PROSE_SCHEMA,
             },
             math: {
               type: 'string',
@@ -148,14 +192,20 @@ export const SUBMIT_REPLY_TOOL = {
         type: 'object',
         description: 'Optional ending multiple-choice question (4 options A-D).',
         properties: {
-          stem: { type: 'string', description: 'Question prose. Use [[MATH:latex]] for inline math.' },
+          stem: {
+            ...INLINE_PROSE_SCHEMA,
+            description: 'Question stem as parts. Use type="math" for inline LaTeX.',
+          },
           options: {
             type: 'array',
             items: {
               type: 'object',
               properties: {
                 label: { type: 'string', enum: ['A', 'B', 'C', 'D'] },
-                text: { type: 'string' },
+                text: {
+                  ...INLINE_PROSE_SCHEMA,
+                  description: 'Option text as parts. Use type="math" for inline LaTeX.',
+                },
               },
               required: ['label', 'text'],
             },
