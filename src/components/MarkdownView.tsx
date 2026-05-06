@@ -22,7 +22,16 @@ type Props = {
 function sanitizeMathDelimiters(text: string): string {
   let out = String(text || '');
 
-  // Strip markdown bold/italic that appears INSIDE inline math.
+  const DOLLAR_SENTINEL = '\u0001CURRENCY\u0001';
+  out = out.replace(/\\\$/g, DOLLAR_SENTINEL);
+
+  // Strip markdown bold/italic inside math (block + inline).
+  out = out.replace(/\$\$([\s\S]+?)\$\$/g, (_m, inner: string) => {
+    const cleaned = inner
+      .replace(/\*\*([^*]+)\*\*/g, '$1')
+      .replace(/(?<!\\)\*([^*\n]+)\*/g, '$1');
+    return `$$${cleaned}$$`;
+  });
   out = out.replace(/\$([^$\n]+?)\$/g, (_m, inner: string) => {
     const cleaned = inner
       .replace(/\*\*([^*]+)\*\*/g, '$1')
@@ -30,19 +39,40 @@ function sanitizeMathDelimiters(text: string): string {
     return `$${cleaned}$`;
   });
 
-  // Unwrap inline math whose contents are actually prose (3+ letter word, no LaTeX cmds).
-  out = out.replace(/\$([^$\n]{1,400}?)\$/g, (m, inner: string) => {
-    const trimmed = inner.trim();
-    if (!trimmed) return m;
-    const hasProseWord = /(^|\s)[A-Za-z]{3,}(\s|$)/.test(trimmed);
-    const hasLatexCmd = /\\[a-zA-Z]+|\\\\|\^|_\{|\\frac|\\times|\\div|\\cdot|\\sqrt|\\sum|\\int|\\le|\\ge|\\neq/.test(trimmed);
-    if (hasProseWord && !hasLatexCmd) return trimmed;
-    return m;
-  });
+  // Unwrap math whose contents are actually prose.
+  const isProse = (s: string) => {
+    const t = s.trim();
+    if (!t) return false;
+    const hasWordPair = /[A-Za-z]{3,}\s+[A-Za-z]{2,}/.test(t);
+    const hasCommonWord = /\b(?:the|and|of|or|is|are|with|for|to|from|by|than|that|this|instead|market|price|value|par)\b/i.test(t);
+    const hasLatexCmd = /\\[a-zA-Z]+|\\\\|\^\{|_\{|\\frac|\\times|\\div|\\cdot|\\sqrt|\\sum|\\int|\\le|\\ge|\\neq|\\pm/.test(t);
+    return (hasWordPair || hasCommonWord) && !hasLatexCmd;
+  };
+  out = out.replace(/\$\$([\s\S]+?)\$\$/g, (m, inner: string) => (isProse(inner) ? inner.trim() : m));
+  out = out.replace(/\$([^$\n]{1,800}?)\$/g, (m, inner: string) => (isProse(inner) ? inner.trim() : m));
 
-  // Stray ** adjacent to math delimiters and runs of 3+ asterisks.
+  // Balance unmatched `**` per line.
+  out = out
+    .split('\n')
+    .map((line) => {
+      const count = (line.match(/\*\*/g) || []).length;
+      if (count > 0 && count % 2 === 1) return line.replace(/\*\*(?!.*\*\*)/, '');
+      return line;
+    })
+    .join('\n');
+
   out = out.replace(/\*\*(\s*)\$/g, '$1$$').replace(/\$(\s*)\*\*/g, '$$$1');
   out = out.replace(/\*{3,}/g, '**');
+
+  // Restore escaped dollars BEFORE the orphan-$ pass so currency counts.
+  out = out.replace(new RegExp(DOLLAR_SENTINEL, 'g'), '$');
+
+  // Drop orphan `$` only when there are 3+ and the total is odd.
+  for (let i = 0; i < 3; i += 1) {
+    const dollars = (out.match(/(?<!\\)\$/g) || []).length;
+    if (dollars % 2 === 0 || dollars < 3) break;
+    out = out.replace(/\$(?!.*\$)/s, '');
+  }
 
   return out;
 }

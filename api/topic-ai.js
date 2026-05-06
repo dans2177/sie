@@ -1,5 +1,6 @@
 import Anthropic, { APIError } from '@anthropic-ai/sdk';
 import { logTokenUsage } from './_db.js';
+import { sanitizeMathDelimiters } from './_sanitizeMath.js';
 
 function send(res, code, payload) {
   res.status(code).setHeader('Content-Type', 'application/json');
@@ -32,13 +33,26 @@ Rules:
 - Cite FINRA/SEC rule numbers when directly relevant.
 - Use mnemonics where genuinely helpful.
 - When hierarchy/process visuals help, include a compact chart in a fenced code block using arrows (example: A -> B -> C).
-- Math formatting (STRICT):
-  - Use LaTeX delimiters ONLY for actual mathematical expressions, equations, or single variables (e.g. $YTM$, $P = \\frac{C}{r}$). Use $$...$$ on its own block lines for displayed equations.
-  - DO NOT wrap plain prose, sentences, phrases, parenthetical asides, or units inside $...$. If the content has spaces and ordinary words, it is NOT math.
-  - DO NOT wrap plain dollar amounts or numbers in $...$. Write currency as \\$5,000 or just "$5,000" written as "\\$5,000" so the dollar sign is escaped. Prefer plain text like "\\$5,000" or "5,000 dollars" over $5{,}000$.
-  - NEVER put markdown like **bold** or *italic* inside $...$ — markdown is ignored inside math and breaks rendering.
-  - Numbers inside math must use a thin space, not a comma in the middle of multi-token phrases. Prefer $5{,}000 \\times 0.042$ over $5,000 \\times 0.042$.
+- Math formatting (STRICT — output is rendered with KaTeX + Markdown):
+  - Use LaTeX delimiters ONLY for genuine mathematical expressions, equations, or single variables. Examples that ARE math: $YTM$, $P = \\frac{C}{r}$, $5{,}000 \\times 0.042$.
+  - DO NOT wrap plain prose, sentences, parenthetical asides, units, or labels in $...$. If it contains everyday words separated by spaces (e.g. "instead of market price"), it is PROSE — write it as plain text.
+  - Currency: ALWAYS write dollar amounts as escaped text: \\$5{,}000 or \\$210. NEVER write "$5,000" — the bare $ will be parsed as a math delimiter and break the page. NEVER put currency inside $...$.
+  - NEVER nest markdown inside math: no **bold**, no *italic*, no \`code\` between $...$. KaTeX ignores them and the result renders as garbled italics.
+  - Inside math, separate thousands with \\, or {,} (e.g. $5{,}000$). Outside math, write 5,000 normally.
+  - Every $ must have a matching closing $. Every $$ must have a matching closing $$. Count them before sending.
   - Do NOT escape math with backticks.
+
+  CORRECT examples:
+    Annual coupon = \\$5{,}000 \\times 4.2\\% = \\$210
+    Current Yield = $\\frac{210}{4{,}650} = 4.52\\%$
+    Always anchor the denominator to market price, not par.
+
+  WRONG examples (do NOT do this):
+    $5,000 \\times 4.2\\% = \\$210$            (mixes escaped and unescaped $; orphan $)
+    $(5,000) instead of market price (4,650)$  (this is prose, not math)
+    Current Yield = $210 ** / ** 4{,}650$       (markdown bold inside math)
+    The price is $4,650 today.                  (bare $ in prose — escape it: \\$4{,}650)
+
 - Use a mastery cadence: teach -> test -> diagnose mistake pattern -> retest with variation.
 - Prefer realistic SIE-style scenarios over definition-only drills.
 - Keep tone supportive and motivating for repeat daily practice.
@@ -51,41 +65,6 @@ Adaptive memory context:
 ${adaptiveBrief}
 
 Use this context to target weak areas and avoid repeating what the learner already mastered.` : ''}`;
-}
-
-function sanitizeMathDelimiters(text) {
-  let out = String(text || '');
-
-  // 1) Strip markdown bold/italic that appears INSIDE inline math: $...**foo**...$ -> $...foo...$
-  out = out.replace(/\$([^$\n]+?)\$/g, (m, inner) => {
-    const cleaned = inner.replace(/\*\*([^*]+)\*\*/g, '$1').replace(/(?<!\\)\*([^*\n]+)\*/g, '$1');
-    return `$${cleaned}$`;
-  });
-
-  // 2) Unwrap inline math that is actually prose. Heuristic: contains a run of >=2
-  //    ASCII letters that is not a standalone short variable token (e.g. "instead of",
-  //    "market price"), OR contains a comma followed by a space (number list rather than math).
-  out = out.replace(/\$([^$\n]{1,400}?)\$/g, (m, inner) => {
-    const trimmed = inner.trim();
-    if (!trimmed) return m;
-    // Looks like a sentence fragment: has a space-delimited word of length >= 3 made of letters.
-    const hasProseWord = /(^|\s)[A-Za-z]{3,}(\s|$)/.test(trimmed);
-    // Has known LaTeX command? then keep as math.
-    const hasLatexCmd = /\\[a-zA-Z]+|\\\\|\^|_\{|\\frac|\\times|\\div|\\cdot|\\sqrt|\\sum|\\int|\\le|\\ge|\\neq/.test(trimmed);
-    if (hasProseWord && !hasLatexCmd) {
-      // Unwrap; also escape any leftover $ to avoid re-triggering math.
-      return trimmed;
-    }
-    return m;
-  });
-
-  // 3) Remove stray double-asterisk pairs that ended up adjacent to math like "$...$**" or "**$...$"
-  out = out.replace(/\*\*(\s*)\$/g, '$1$$').replace(/\$(\s*)\*\*/g, '$$$1');
-
-  // 4) Collapse runs of 3+ asterisks left over from broken bold.
-  out = out.replace(/\*{3,}/g, '**');
-
-  return out;
 }
 
 function normalizeAssistantText(text) {
