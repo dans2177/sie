@@ -76,6 +76,20 @@ function normalizeAssistantText(text) {
 
   out = sanitizeMathDelimiters(out);
 
+  // If the model put A) B) C) D) on a single line, split them onto separate lines.
+  // Look for at least two option labels on the same line and break before each.
+  out = out
+    .split('\n')
+    .map((line) => {
+      const labels = line.match(/(?:^|\s)[A-D]\)\s/g) || [];
+      if (labels.length >= 2) {
+        // Insert a newline before every "A)" / "B)" / etc. that follows whitespace mid-line.
+        return line.replace(/\s+([A-D]\)\s)/g, '\n$1').trim();
+      }
+      return line;
+    })
+    .join('\n');
+
   out = out
     .split('\n')
     .map((line) => {
@@ -84,6 +98,11 @@ function normalizeAssistantText(text) {
       return `${m[1].toUpperCase()}) ${m[2].trim()}`;
     })
     .join('\n');
+
+  // Ensure each option line is its own markdown paragraph (markdown collapses single
+  // newlines, so add a blank line before the first option and between consecutive ones).
+  out = out.replace(/([^\n])\n([A-D]\) )/g, '$1\n\n$2');
+  out = out.replace(/^([A-D]\) .+)\n([A-D]\) )/gm, '$1\n\n$2');
 
   if (!/^\[OUTCOME:(CORRECT|NEEDS_WORK|NEUTRAL)\]/i.test(out)) {
     out = `[OUTCOME:NEUTRAL]\n${out}`;
