@@ -14,12 +14,46 @@ type Props = {
   streaming?: boolean;
 };
 
+/**
+ * Heal common LaTeX breakage in AI-generated replies that were stored before the
+ * server-side sanitizer existed (or that arrive mid-stream). Mirrors the logic in
+ * `api/topic-ai.js#sanitizeMathDelimiters`.
+ */
+function sanitizeMathDelimiters(text: string): string {
+  let out = String(text || '');
+
+  // Strip markdown bold/italic that appears INSIDE inline math.
+  out = out.replace(/\$([^$\n]+?)\$/g, (_m, inner: string) => {
+    const cleaned = inner
+      .replace(/\*\*([^*]+)\*\*/g, '$1')
+      .replace(/(?<!\\)\*([^*\n]+)\*/g, '$1');
+    return `$${cleaned}$`;
+  });
+
+  // Unwrap inline math whose contents are actually prose (3+ letter word, no LaTeX cmds).
+  out = out.replace(/\$([^$\n]{1,400}?)\$/g, (m, inner: string) => {
+    const trimmed = inner.trim();
+    if (!trimmed) return m;
+    const hasProseWord = /(^|\s)[A-Za-z]{3,}(\s|$)/.test(trimmed);
+    const hasLatexCmd = /\\[a-zA-Z]+|\\\\|\^|_\{|\\frac|\\times|\\div|\\cdot|\\sqrt|\\sum|\\int|\\le|\\ge|\\neq/.test(trimmed);
+    if (hasProseWord && !hasLatexCmd) return trimmed;
+    return m;
+  });
+
+  // Stray ** adjacent to math delimiters and runs of 3+ asterisks.
+  out = out.replace(/\*\*(\s*)\$/g, '$1$$').replace(/\$(\s*)\*\*/g, '$$$1');
+  out = out.replace(/\*{3,}/g, '**');
+
+  return out;
+}
+
 function MarkdownViewInner({ text, stripOutcomeTag = true, streaming = false }: Props) {
   const cleaned = useMemo(() => {
     let t = String(text || '');
     if (stripOutcomeTag) {
       t = t.replace(/^\[OUTCOME:(CORRECT|NEEDS_WORK|NEUTRAL)\]\s*\n?/i, '');
     }
+    t = sanitizeMathDelimiters(t);
     return t;
   }, [text, stripOutcomeTag]);
 
