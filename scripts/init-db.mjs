@@ -1,3 +1,6 @@
+import { readdir, readFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
 import postgres from 'postgres';
 
 const databaseUrl =
@@ -13,86 +16,64 @@ if (!databaseUrl) {
   process.exit(1);
 }
 
-const sql = postgres(databaseUrl, {
-  ssl: 'require',
-  max: 1,
-});
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const migrationsDir = join(__dirname, '..', 'supabase', 'migrations');
+
+const sql = postgres(databaseUrl, { ssl: 'require', max: 1 });
 
 try {
-  await sql.begin(async (tx) => {
-    await tx`
-      create table if not exists profile_progress (
-        profile_id text not null,
-        topic_id text not null,
-        completed boolean not null default true,
-        updated_at timestamptz not null default now(),
-        primary key (profile_id, topic_id)
-      )
-    `;
+  // Lightweight migration ledger so we never re-apply a file that already ran.
+  await sql`
+    create table if not exists schema_migrations (
+      filename text primary key,
+      applied_at timestamptz not null default now()
+    )
+  `;
 
-    await tx`
-      create table if not exists chat_events (
-        id bigserial primary key,
-        profile_id text not null,
-        topic_id text,
-        user_message text not null,
-        assistant_message text not null,
-        created_at timestamptz not null default now()
-      )
+  // Bootstrap: if the ledger is empty but core tables already exist (created by
+  // ensureTables() at runtime), back-fill the init migration as already applied
+  // so we don't attempt to re-run historical DDL on a live database.
+  const ledgerCount = Number((await sql`select count(*)::int as n from schema_migrations`)[0].n);
+  if (ledgerCount === 0) {
+    const exists = await sql`
+      select to_regclass('public.profile_progress') as t
     `;
+    if (exists[0]?.t) {
+      const initFile = '20260503180054_init_schema.sql';
+      console.log(`bootstrap: marking ${initFile} as already applied (tables already exist)`);
+      await sql`insert into schema_migrations (filename) values (${initFile}) on conflict do nothing`;
+    }
+  }
 
-    await tx`
-      create table if not exists topic_chats (
-        profile_id text not null,
-        topic_id text not null,
-        messages jsonb not null,
-        updated_at timestamptz not null default now(),
-        primary key (profile_id, topic_id)
-      )
-    `;
+  const files = (await readdir(migrationsDir))
+    .filter((f) => f.endsWith('.sql'))
+    .sort();
 
-    await tx`
-      create table if not exists event_logs (
-        id bigserial primary key,
-        profile_id text not null,
-        event_type text not null,
-        payload jsonb not null default '{}'::jsonb,
-        created_at timestamptz not null default now()
-      )
-    `;
+  if (files.length === 0) {
+    console.warn('No .sql migrations found in', migrationsDir);
+  }
 
-    await tx`
-      create table if not exists daily_tests (
-        profile_id text not null,
-        test_date text not null,
-        score integer not null,
-        total integer not null,
-        payload jsonb not null,
-        weak_topics jsonb not null default '[]'::jsonb,
-        completed_at timestamptz not null default now(),
-        primary key (profile_id, test_date)
-      )
-    `;
+  const applied = new Set(
+    (await sql`select filename from schema_migrations`).map((r) => r.filename),
+  );
 
-    await tx`
-      create table if not exists profile_state (
-        profile_id text primary key,
-        last_topic_id text,
-        updated_at timestamptz not null default now()
-      )
-    `;
-
-    await tx`
-      create table if not exists math_drills (
-        profile_id text primary key,
-        cards jsonb not null default '[]'::jsonb,
-        updated_at timestamptz not null default now()
-      )
-    `;
-  });
+  let ran = 0;
+  for (const filename of files) {
+    if (applied.has(filename)) {
+      console.log(`skip  ${filename} (already applied)`);
+      continue;
+    }
+    const ddl = await readFile(join(migrationsDir, filename), 'utf8');
+    console.log(`apply ${filename}`);
+    await sql.begin(async (tx) => {
+      await tx.unsafe(ddl);
+      await tx`insert into schema_migrations (filename) values (${filename})`;
+    });
+    ran += 1;
+  }
 
   const result = await sql`select now() as connected_at`;
-  console.log('Database ready. Connected at:', result[0].connected_at);
+  console.log(`Database ready. Applied ${ran} new migration(s). Connected at:`, result[0].connected_at);
 } catch (error) {
   console.error('Database initialization failed:', error instanceof Error ? error.message : error);
   process.exitCode = 1;
