@@ -32,7 +32,13 @@ Rules:
 - Cite FINRA/SEC rule numbers when directly relevant.
 - Use mnemonics where genuinely helpful.
 - When hierarchy/process visuals help, include a compact chart in a fenced code block using arrows (example: A -> B -> C).
-- For math, use LaTeX delimiters: $...$ for inline (e.g. $YTM$) and $$...$$ on its own block lines for displayed equations. Do NOT escape with backticks.
+- Math formatting (STRICT):
+  - Use LaTeX delimiters ONLY for actual mathematical expressions, equations, or single variables (e.g. $YTM$, $P = \\frac{C}{r}$). Use $$...$$ on its own block lines for displayed equations.
+  - DO NOT wrap plain prose, sentences, phrases, parenthetical asides, or units inside $...$. If the content has spaces and ordinary words, it is NOT math.
+  - DO NOT wrap plain dollar amounts or numbers in $...$. Write currency as \\$5,000 or just "$5,000" written as "\\$5,000" so the dollar sign is escaped. Prefer plain text like "\\$5,000" or "5,000 dollars" over $5{,}000$.
+  - NEVER put markdown like **bold** or *italic* inside $...$ — markdown is ignored inside math and breaks rendering.
+  - Numbers inside math must use a thin space, not a comma in the middle of multi-token phrases. Prefer $5{,}000 \\times 0.042$ over $5,000 \\times 0.042$.
+  - Do NOT escape math with backticks.
 - Use a mastery cadence: teach -> test -> diagnose mistake pattern -> retest with variation.
 - Prefer realistic SIE-style scenarios over definition-only drills.
 - Keep tone supportive and motivating for repeat daily practice.
@@ -47,12 +53,49 @@ ${adaptiveBrief}
 Use this context to target weak areas and avoid repeating what the learner already mastered.` : ''}`;
 }
 
+function sanitizeMathDelimiters(text) {
+  let out = String(text || '');
+
+  // 1) Strip markdown bold/italic that appears INSIDE inline math: $...**foo**...$ -> $...foo...$
+  out = out.replace(/\$([^$\n]+?)\$/g, (m, inner) => {
+    const cleaned = inner.replace(/\*\*([^*]+)\*\*/g, '$1').replace(/(?<!\\)\*([^*\n]+)\*/g, '$1');
+    return `$${cleaned}$`;
+  });
+
+  // 2) Unwrap inline math that is actually prose. Heuristic: contains a run of >=2
+  //    ASCII letters that is not a standalone short variable token (e.g. "instead of",
+  //    "market price"), OR contains a comma followed by a space (number list rather than math).
+  out = out.replace(/\$([^$\n]{1,400}?)\$/g, (m, inner) => {
+    const trimmed = inner.trim();
+    if (!trimmed) return m;
+    // Looks like a sentence fragment: has a space-delimited word of length >= 3 made of letters.
+    const hasProseWord = /(^|\s)[A-Za-z]{3,}(\s|$)/.test(trimmed);
+    // Has known LaTeX command? then keep as math.
+    const hasLatexCmd = /\\[a-zA-Z]+|\\\\|\^|_\{|\\frac|\\times|\\div|\\cdot|\\sqrt|\\sum|\\int|\\le|\\ge|\\neq/.test(trimmed);
+    if (hasProseWord && !hasLatexCmd) {
+      // Unwrap; also escape any leftover $ to avoid re-triggering math.
+      return trimmed;
+    }
+    return m;
+  });
+
+  // 3) Remove stray double-asterisk pairs that ended up adjacent to math like "$...$**" or "**$...$"
+  out = out.replace(/\*\*(\s*)\$/g, '$1$$').replace(/\$(\s*)\*\*/g, '$$$1');
+
+  // 4) Collapse runs of 3+ asterisks left over from broken bold.
+  out = out.replace(/\*{3,}/g, '**');
+
+  return out;
+}
+
 function normalizeAssistantText(text) {
   let out = String(text || '')
     .replace(/\r\n/g, '\n')
     .replace(/[\u2018\u2019]/g, "'")
     .replace(/[\u201C\u201D]/g, '"')
     .trim();
+
+  out = sanitizeMathDelimiters(out);
 
   out = out
     .split('\n')

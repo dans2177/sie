@@ -22,6 +22,7 @@ export function getSql() {
     sql = postgres(connectionString, {
       ssl: 'require',
       max: 1,
+      onnotice: () => {},
     });
   }
   return sql;
