@@ -276,26 +276,31 @@ export default function App() {
         });
         const next = upsertAssistantMessage(init, r);
         if (isCurrentRun()) setMsgs(next);
+        // Render is done — drop the thinking indicator before background persistence.
+        if (isCurrentRun()) setLoading(false);
         saveTopicChat(activeProfile, topic.id, next);
-        await saveTopicChatRemote(activeProfile, topic.id, next);
         markTopicPassed(topic.id, next);
         const outcome = parseAssistantOutcome(r);
         if (outcome !== 'neutral') {
           applyReviewOutcome(topic.id, outcome === 'correct');
         }
-        await saveChatMemory({
+        log('topic_bootstrap_generated', { topicId: topic.id });
+        // Fire-and-forget remote saves; failures are logged but don't block UI.
+        void saveTopicChatRemote(activeProfile, topic.id, next).catch((err) =>
+          log('topic_bootstrap_remote_save_error', { topicId: topic.id, message: (err as Error).message }),
+        );
+        void saveChatMemory({
           profileId: activeProfile,
           topicId: topic.id,
           userMessage: init[0].content,
           assistantMessage: r,
-        });
-        log('topic_bootstrap_generated', { topicId: topic.id });
+        }).catch((err) => log('topic_bootstrap_memory_error', { topicId: topic.id, message: (err as Error).message }));
       } catch (e) {
         if (isCurrentRun()) setMsgs(init);
         setChatError(friendlyChatError((e as Error).message));
         log('topic_bootstrap_error', { topicId: topic.id });
+        if (isCurrentRun()) setLoading(false);
       }
-      if (isCurrentRun()) setLoading(false);
     },
     [activeProfile, memory.adaptiveBrief, log, markTopicPassed, applyReviewOutcome, isTopicUnlocked]
   );
@@ -348,29 +353,34 @@ export default function App() {
           full = full.map((m, idx) => (idx === full.length - 2 ? { ...m, meta: fixedUserMeta } : m));
         }
         if (isCurrentRun()) setMsgs(full);
+        // Render is done — drop the thinking indicator before background persistence.
+        if (isCurrentRun()) setLoading(false);
         saveTopicChat(activeProfile, topicId, full);
-        await saveTopicChatRemote(activeProfile, topicId, full);
         markTopicPassed(topicId, full);
         if (outcome !== 'neutral') {
           applyReviewOutcome(topicId, outcome === 'correct');
         }
-        await saveChatMemory({
+        log('chat_assistant_message', { topicId, length: r.length, outcome });
+        // Fire-and-forget remote saves; failures are logged but don't block UI.
+        void saveTopicChatRemote(activeProfile, topicId, full).catch((err) =>
+          log('chat_remote_save_error', { topicId, message: (err as Error).message }),
+        );
+        void saveChatMemory({
           profileId: activeProfile,
           topicId,
           userMessage: txt,
           assistantMessage: r,
-        });
-        log('chat_assistant_message', { topicId, length: r.length, outcome });
+        }).catch((err) => log('chat_memory_error', { topicId, message: (err as Error).message }));
       } catch (e) {
         // Roll the optimistic empty assistant placeholder back; keep the user msg so they can retry.
         if (isCurrentRun()) setMsgs(next);
         saveTopicChat(activeProfile, topicId, next);
-        await saveTopicChatRemote(activeProfile, topicId, next);
+        void saveTopicChatRemote(activeProfile, topicId, next).catch(() => {});
         const message = (e as Error).message || 'Tutor unavailable.';
         if (isCurrentRun()) setChatError(friendlyChatError(message));
         log('chat_assistant_error', { topicId, message });
+        if (isCurrentRun()) setLoading(false);
       }
-      if (isCurrentRun()) setLoading(false);
     },
     [loading, sel, msgs, activeProfile, memory.adaptiveBrief, log, markTopicPassed, applyReviewOutcome]
   );
