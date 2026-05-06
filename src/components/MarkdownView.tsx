@@ -51,6 +51,16 @@ function sanitizeMathDelimiters(text: string): string {
   out = out.replace(/\$\$([\s\S]+?)\$\$/g, (m, inner: string) => (isProse(inner) ? inner.trim() : m));
   out = out.replace(/\$([^$\n]{1,800}?)\$/g, (m, inner: string) => (isProse(inner) ? inner.trim() : m));
 
+  // Currency-shaped pairs: e.g. "$1,000 ... $6,800" creates an unintended math
+  // span between two bare currency markers. Repeatedly unwrap any `$...$` whose
+  // contents are pure digits/commas/decimals.
+  const isCurrency = (s: string) => /^[0-9][0-9,\.\s]*[0-9kKmMbB]?$/.test(s.trim()) && s.trim().length > 0;
+  for (let i = 0; i < 4; i += 1) {
+    const before = out;
+    out = out.replace(/\$([^$\n]{1,80}?)\$/g, (m, inner: string) => (isCurrency(inner) ? `$${inner.trim()}` : m));
+    if (out === before) break;
+  }
+
   // Balance unmatched `**` per line.
   out = out
     .split('\n')

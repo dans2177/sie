@@ -96,3 +96,41 @@ test('idempotent: running twice produces same output', () => {
   const twice = sanitizeMathDelimiters(once);
   assert.equal(twice, once);
 });
+
+test('unwraps paired currency $1,000 ... $6,800 written as bare prose', () => {
+  const input = 'A bond has a par value of $1,000 and trades at $6,800. What is its current yield?';
+  const out = sanitizeMathDelimiters(input);
+  // No paired math should remain that captures the prose between the two currency markers.
+  // The "and trades at" must NOT be inside a $...$ pair.
+  const matches = [...out.matchAll(/\$([^$\n]+?)\$/g)];
+  for (const m of matches) {
+    assert.ok(!/[A-Za-z]{2,}\s+[A-Za-z]{2,}/.test(m[1]), `prose captured in math: ${m[0]}`);
+  }
+});
+
+test('unwraps adjacent currency-only pair $1,000$', () => {
+  const input = 'Pay $1,000$ today.';
+  const out = sanitizeMathDelimiters(input);
+  assert.match(out, /\$1,000/);
+  // No math span left.
+  assert.equal((out.match(/(?<!\\)\$/g) || []).length, 1);
+});
+
+test('does not unwrap real math like $x + 1$', () => {
+  const input = 'Solve $x + 1 = 2$ for x.';
+  const out = sanitizeMathDelimiters(input);
+  assert.equal(out, input);
+});
+
+test('streaming partial: question line with A) only does not break later options', () => {
+  // Mid-stream snapshot: model has emitted up through option A, with bare currency
+  // earlier in the message creating an open math run.
+  const input = [
+    'A bond has a par value of $1,000 and trades at $6,800.',
+    'A) 6.0%',
+  ].join('\n');
+  const out = sanitizeMathDelimiters(input);
+  // Option A label must still be present (not swallowed by an unclosed math run).
+  assert.match(out, /A\) 6\.0%/);
+});
+

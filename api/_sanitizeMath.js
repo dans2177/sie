@@ -38,6 +38,19 @@ export function sanitizeMathDelimiters(text) {
   out = out.replace(/\$\$([\s\S]+?)\$\$/g, (m, inner) => (isProse(inner) ? inner.trim() : m));
   out = out.replace(/\$([^$\n]{1,800}?)\$/g, (m, inner) => (isProse(inner) ? inner.trim() : m));
 
+  // 2b) Currency-shaped pairs: when the model wrote bare currency like
+  //     "...par value of $1,000, and $6,800..." those two $ pair up and KaTeX
+  //     renders the comma+text between them as math. Detect any `$<currency>$`
+  //     run (digits/commas/decimals only) and unwrap, restoring a plain `$`
+  //     in front of the number.
+  const isCurrency = (s) => /^[0-9][0-9,\.\s]*[0-9kKmMbB]?$/.test(s.trim()) && s.trim().length > 0;
+  // Repeat to catch chained pairs.
+  for (let i = 0; i < 4; i += 1) {
+    const before = out;
+    out = out.replace(/\$([^$\n]{1,80}?)\$/g, (m, inner) => (isCurrency(inner) ? `$${inner.trim()}` : m));
+    if (out === before) break;
+  }
+
   // 3) Balance unmatched `**` per line (keeps bold from leaking across paragraphs).
   out = out
     .split('\n')
